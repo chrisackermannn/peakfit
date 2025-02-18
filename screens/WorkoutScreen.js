@@ -1,9 +1,21 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, FlatList, TouchableOpacity, TextInput, Modal, StyleSheet, ScrollView } from 'react-native';
+import { 
+  View, 
+  Text, 
+  FlatList, 
+  TouchableOpacity, 
+  TextInput, 
+  Modal, 
+  StyleSheet, 
+  ScrollView 
+} from 'react-native';
 import { Button } from 'react-native-paper';
 import { exercisesAPI } from '../data/exerciseAPI';
+import { addWorkout, deleteWorkout } from '../data/firebaseHelpers';
+import { useAuth } from '../context/AuthContext';
 
 export default function WorkoutScreen() {
+  const { user } = useAuth();
   const [workouts, setWorkouts] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -17,26 +29,59 @@ export default function WorkoutScreen() {
   const [isTiming, setIsTiming] = useState(false);
   const timerRef = useRef(null);
 
-  // Start Workout Function (Auto-start timer)
-  // ✅ Add Exercise Function (Fixing the issue)
-const addWorkout = () => {
+  const addWorkoutToFirebase = async () => {
     if (selectedExercise && weight && reps && sets) {
-      setWorkouts((prevWorkouts) => [
-        ...prevWorkouts,
-        { name: selectedExercise, weight, reps, sets },
-      ]);
-      setModalVisible(false);
-      setSearchQuery('');
-      setFilteredExercises([]); // Reset search results
-      setSelectedExercise('');
-      setWeight('');
-      setReps('');
-      setSets('');
+      try {
+        const workoutData = {
+          date: new Date().toISOString(),
+          duration: timer,
+          exercises: [{
+            name: selectedExercise,
+            weight: parseFloat(weight),
+            reps: parseInt(reps),
+            sets: parseInt(sets)
+          }],
+          notes: ''
+        };
+
+        const workoutId = await addWorkout(user.uid, workoutData);
+        setWorkouts((prevWorkouts) => [
+          ...prevWorkouts,
+          { 
+            id: workoutId,
+            name: selectedExercise, 
+            weight, 
+            reps, 
+            sets 
+          },
+        ]);
+        
+        setModalVisible(false);
+        setSearchQuery('');
+        setFilteredExercises([]);
+        setSelectedExercise('');
+        setWeight('');
+        setReps('');
+        setSets('');
+      } catch (error) {
+        console.error('Error adding workout:', error);
+      }
     }
   };
-  
-  
-  
+
+  const deleteWorkoutFromFirebase = async (index) => {
+    try {
+      const workout = workouts[index];
+      if (workout.id) {
+        await deleteWorkout(user.uid, workout.id);
+      }
+      const newWorkouts = workouts.filter((_, i) => i !== index);
+      setWorkouts(newWorkouts);
+    } catch (error) {
+      console.error('Error deleting workout:', error);
+    }
+  };
+
   const startWorkout = () => {
     setIsWorkoutStarted(true);
     setIsTiming(true);
@@ -46,7 +91,6 @@ const addWorkout = () => {
     }, 1000);
   };
 
-  // Stop Timer Function
   const stopWorkout = () => {
     setIsTiming(false);
     if (timerRef.current) {
@@ -55,7 +99,6 @@ const addWorkout = () => {
     }
   };
 
-  // Search Function (User searches for exercises)
   const handleSearch = (text) => {
     setSearchQuery(text);
     if (text === '') {
@@ -81,12 +124,11 @@ const addWorkout = () => {
         <View style={styles.innerContainer}>
           <Text style={styles.header}>Workout Timer: {timer}s</Text>
 
-          {/* Add Exercise Button */}
           <TouchableOpacity style={styles.addButton} onPress={() => setModalVisible(true)}>
             <Text style={styles.addButtonText}>Add Exercise</Text>
           </TouchableOpacity>
-                    {/* Workout List */}
-                    <FlatList
+
+          <FlatList
             data={workouts}
             keyExtractor={(item, index) => index.toString()}
             contentContainerStyle={{ flexGrow: 1, paddingBottom: 50 }}
@@ -96,16 +138,16 @@ const addWorkout = () => {
                   {item.name} - {item.weight} lbs | {item.reps} reps | {item.sets} sets
                 </Text>
                 <View style={styles.buttonRow}>
-                  <Button onPress={() => { 
-                    setSelectedExercise(item.name); 
-                    setWeight(item.weight); 
-                    setReps(item.reps); 
-                    setSets(item.sets); 
-                    setModalVisible(true); 
+                  <Button onPress={() => {
+                    setSelectedExercise(item.name);
+                    setWeight(item.weight);
+                    setReps(item.reps);
+                    setSets(item.sets);
+                    setModalVisible(true);
                   }}>
                     Edit
                   </Button>
-                  <Button onPress={() => deleteWorkout(index)} color="red">
+                  <Button onPress={() => deleteWorkoutFromFirebase(index)} color="red">
                     Delete
                   </Button>
                 </View>
@@ -113,18 +155,24 @@ const addWorkout = () => {
             )}
           />
 
-          {/* End Workout Button */}
           <Button mode="contained" onPress={stopWorkout} style={styles.endWorkoutButton} color="red">
             End Workout
           </Button>
 
-          {/* Save/Post Workout Options */}
           {!isTiming && isWorkoutStarted && (
             <View style={styles.savePostContainer}>
-              <Button mode="contained" onPress={() => console.log("Workout Saved to Profile")} style={styles.saveButton}>
+              <Button 
+                mode="contained" 
+                onPress={() => console.log("Workout Saved to Profile")} 
+                style={styles.saveButton}
+              >
                 Save to Profile
               </Button>
-              <Button mode="contained" onPress={() => console.log("Workout Posted")} style={styles.postButton}>
+              <Button 
+                mode="contained" 
+                onPress={() => console.log("Workout Posted")} 
+                style={styles.postButton}
+              >
                 Post Workout
               </Button>
             </View>
@@ -132,13 +180,11 @@ const addWorkout = () => {
         </View>
       )}
 
-      {/* Add Exercise Modal */}
       <Modal visible={modalVisible} animationType="slide" transparent={true}>
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Search for an Exercise</Text>
 
-            {/* Search Input */}
             <TextInput
               placeholder="Search exercises..."
               style={styles.searchInput}
@@ -146,21 +192,41 @@ const addWorkout = () => {
               onChangeText={handleSearch}
             />
 
-            {/* Exercise Search Results */}
             <ScrollView style={styles.exerciseList}>
               {filteredExercises.map((item) => (
-                <TouchableOpacity key={item.id} onPress={() => setSelectedExercise(item.name)} style={styles.exerciseOption}>
+                <TouchableOpacity 
+                  key={item.id} 
+                  onPress={() => setSelectedExercise(item.name)} 
+                  style={styles.exerciseOption}
+                >
                   <Text style={styles.exerciseText}>{item.name}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
 
-            {/* Input Fields for Exercise */}
-            <TextInput placeholder="Weight (lbs)" keyboardType="numeric" style={styles.input} value={weight} onChangeText={setWeight} />
-            <TextInput placeholder="Reps" keyboardType="numeric" style={styles.input} value={reps} onChangeText={setReps} />
-            <TextInput placeholder="Sets" keyboardType="numeric" style={styles.input} value={sets} onChangeText={setSets} />
+            <TextInput 
+              placeholder="Weight (lbs)" 
+              keyboardType="numeric" 
+              style={styles.input} 
+              value={weight} 
+              onChangeText={setWeight} 
+            />
+            <TextInput 
+              placeholder="Reps" 
+              keyboardType="numeric" 
+              style={styles.input} 
+              value={reps} 
+              onChangeText={setReps} 
+            />
+            <TextInput 
+              placeholder="Sets" 
+              keyboardType="numeric" 
+              style={styles.input} 
+              value={sets} 
+              onChangeText={setSets} 
+            />
 
-            <Button mode="contained" onPress={addWorkout} style={styles.saveButton}>
+            <Button mode="contained" onPress={addWorkoutToFirebase} style={styles.saveButton}>
               Save
             </Button>
             <Button onPress={() => setModalVisible(false)}>Cancel</Button>
@@ -172,29 +238,142 @@ const addWorkout = () => {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f4f4f4', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  innerContainer: { flex: 1, width: '100%', alignItems: 'center' },
-  startWorkoutContainer: { justifyContent: 'center', alignItems: 'center' },
-  bigAddButton: { backgroundColor: '#007AFF', width: 120, height: 120, borderRadius: 60, justifyContent: 'center', alignItems: 'center' },
-  bigAddButtonText: { color: 'white', fontSize: 50, fontWeight: 'bold' },
-  startWorkoutText: { fontSize: 18, color: '#555', marginTop: 10 },
-  header: { fontSize: 24, fontWeight: 'bold', marginBottom: 10, textAlign: 'center' },
-  addButton: { backgroundColor: '#007AFF', padding: 15, borderRadius: 10, marginTop: 10, alignItems: 'center', width: '90%' },
-  addButtonText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
-  workoutItem: { padding: 15, backgroundColor: '#fff', marginVertical: 5, borderRadius: 10 },
-  workoutText: { fontSize: 16 },
-  buttonRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 5 },
-  endWorkoutButton: { marginTop: 20, backgroundColor: 'red', width: '90%' },
-  savePostContainer: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 20 },
-  saveButton: { backgroundColor: '#28A745', flex: 1, marginRight: 10 },
-  postButton: { backgroundColor: '#007AFF', flex: 1 },
-  modalContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
-  modalContent: { width: '90%', backgroundColor: 'white', padding: 20, borderRadius: 10, alignItems: 'center' },
-  modalTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 10 },
-  searchInput: { width: '100%', padding: 10, borderWidth: 1, borderColor: '#ddd', borderRadius: 5, marginBottom: 10 },
-  exerciseList: { maxHeight: 200, width: '100%', borderWidth: 1, borderColor: '#ddd', borderRadius: 5, marginBottom: 10 },
-  exerciseOption: { padding: 10, borderBottomWidth: 1, borderBottomColor: '#ddd' },
-  exerciseText: { fontSize: 16 },
-  input: { width: '100%', padding: 10, borderWidth: 1, borderColor: '#ddd', borderRadius: 5, marginBottom: 10 },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#f4f4f4', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    padding: 20 
+  },
+  innerContainer: { 
+    flex: 1, 
+    width: '100%', 
+    alignItems: 'center' 
+  },
+  startWorkoutContainer: { 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  bigAddButton: { 
+    backgroundColor: '#007AFF', 
+    width: 120, 
+    height: 120, 
+    borderRadius: 60, 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  bigAddButtonText: { 
+    color: 'white', 
+    fontSize: 50, 
+    fontWeight: 'bold' 
+  },
+  startWorkoutText: { 
+    fontSize: 18, 
+    color: '#555', 
+    marginTop: 10 
+  },
+  header: { 
+    fontSize: 24, 
+    fontWeight: 'bold', 
+    marginBottom: 10, 
+    textAlign: 'center' 
+  },
+  addButton: { 
+    backgroundColor: '#007AFF', 
+    padding: 15, 
+    borderRadius: 10, 
+    marginTop: 10, 
+    alignItems: 'center', 
+    width: '90%' 
+  },
+  addButtonText: { 
+    color: 'white', 
+    fontSize: 18, 
+    fontWeight: 'bold' 
+  },
+  workoutItem: { 
+    padding: 15, 
+    backgroundColor: '#fff', 
+    marginVertical: 5, 
+    borderRadius: 10,
+    width: '100%' 
+  },
+  workoutText: { 
+    fontSize: 16 
+  },
+  buttonRow: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    marginTop: 5 
+  },
+  endWorkoutButton: { 
+    marginTop: 20, 
+    backgroundColor: 'red', 
+    width: '90%' 
+  },
+  savePostContainer: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    width: '100%', 
+    marginTop: 20 
+  },
+  saveButton: { 
+    backgroundColor: '#28A745', 
+    flex: 1, 
+    marginRight: 10 
+  },
+  postButton: { 
+    backgroundColor: '#007AFF', 
+    flex: 1 
+  },
+  modalContainer: { 
+    flex: 1, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    backgroundColor: 'rgba(0,0,0,0.5)' 
+  },
+  modalContent: { 
+    width: '90%', 
+    backgroundColor: 'white', 
+    padding: 20, 
+    borderRadius: 10, 
+    alignItems: 'center' 
+  },
+  modalTitle: { 
+    fontSize: 20, 
+    fontWeight: 'bold', 
+    marginBottom: 10 
+  },
+  searchInput: { 
+    width: '100%', 
+    padding: 10, 
+    borderWidth: 1, 
+    borderColor: '#ddd', 
+    borderRadius: 5, 
+    marginBottom: 10 
+  },
+  exerciseList: { 
+    maxHeight: 200, 
+    width: '100%', 
+    borderWidth: 1, 
+    borderColor: '#ddd', 
+    borderRadius: 5, 
+    marginBottom: 10 
+  },
+  exerciseOption: { 
+    padding: 10, 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#ddd' 
+  },
+  exerciseText: { 
+    fontSize: 16 
+  },
+  input: { 
+    width: '100%', 
+    padding: 10, 
+    borderWidth: 1, 
+    borderColor: '#ddd', 
+    borderRadius: 5, 
+    marginBottom: 10 
+  },
 });
-
