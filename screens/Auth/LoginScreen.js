@@ -22,45 +22,62 @@ import { db } from '../../firebaseConfig';
 import * as Google from 'expo-auth-session/providers/google';
 import { makeRedirectUri } from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
+import * as AuthSession from 'expo-auth-session';
+
 
 WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen({ navigation }) {
-  // Generate redirect URI for Google OAuth (using Expo proxy for development)
   const redirectUri = makeRedirectUri({ useProxy: true });
-  console.log("Redirect URI:", redirectUri);
 
-  // Set up Google auth request using the web client ID and the generated redirect URI
   const [request, response, promptAsync] = Google.useAuthRequest({
     webClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com',
-    redirectUri,
+    redirectUri: makeRedirectUri({ useProxy: false }),
+    scopes: ['openid', 'profile', 'email'],
+    responseType: 'id_token',
   });
+  
+  
+  
 
   const auth = getAuth();
-  // Toggle between login and registration modes
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  // For prompting username if not set in Firestore
   const [showUsernameModal, setShowUsernameModal] = useState(false);
   const [username, setUsername] = useState('');
   const [tempUserData, setTempUserData] = useState(null);
 
-  // Listen for Google sign-in response changes
   useEffect(() => {
     if (response?.type === 'success') {
       handleGoogleResponse(response);
     }
   }, [response]);
 
-  // Handle Google sign-in response
+ 
+
   const handleGoogleResponse = async (response) => {
     try {
-      const credential = GoogleAuthProvider.credential(response.authentication.idToken);
+      console.log("Full Google Response:", JSON.stringify(response, null, 2));
+  
+      let idToken = response?.authentication?.idToken;
+  
+      if (!idToken && response?.params?.id_token) {
+        idToken = response.params.id_token; // Extract from response.params
+      }
+  
+      console.log("Extracted ID Token:", idToken);
+  
+      if (!idToken) {
+        throw new Error("Google authentication failed: No ID token received.");
+      }
+  
+      const credential = GoogleAuthProvider.credential(idToken);
       const userCredential = await signInWithCredential(auth, credential);
       const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
+  
       if (userDoc.exists() && userDoc.data().username) {
         navigation.replace('Tabs');
       } else {
@@ -68,11 +85,12 @@ export default function LoginScreen({ navigation }) {
         setShowUsernameModal(true);
       }
     } catch (err) {
+      console.error("Google Sign-In Error:", err.message);
       setError(err.message);
     }
   };
+  
 
-  // Handle login for existing users
   const handleLogin = async () => {
     if (!email || !password) {
       setError('Please fill in all fields');
@@ -96,7 +114,6 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
-  // Handle registration for new users
   const handleRegister = async () => {
     if (!email || !password) {
       setError('Please fill in all fields');
@@ -106,7 +123,6 @@ export default function LoginScreen({ navigation }) {
       setLoading(true);
       setError('');
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      // New user: prompt for username since they won't have a Firestore document yet.
       setTempUserData(userCredential.user);
       setShowUsernameModal(true);
     } catch (err) {
@@ -116,7 +132,6 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
-  // Initiate Google sign-in
   const handleGoogleSignIn = async () => {
     try {
       await promptAsync();
@@ -125,7 +140,6 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
-  // After login/registration, if a username isn't set, prompt user to choose one.
   const handleSetUsername = async () => {
     if (!username.trim()) {
       setError('Please enter a username');
@@ -134,7 +148,6 @@ export default function LoginScreen({ navigation }) {
     try {
       setLoading(true);
       setError('');
-      // Check if the username is already taken
       const usernameQuery = await getDocs(
         query(collection(db, 'users'), where('username', '==', username.toLowerCase()))
       );
@@ -142,7 +155,6 @@ export default function LoginScreen({ navigation }) {
         setError('Username is already taken');
         return;
       }
-      // Save the user document with the chosen username
       await setDoc(doc(db, 'users', tempUserData.uid), {
         email: tempUserData.email,
         username: username.toLowerCase(),
@@ -223,7 +235,6 @@ export default function LoginScreen({ navigation }) {
           </Text>
         </TouchableOpacity>
       </View>
-      {/* Username Modal */}
       <Modal
         visible={showUsernameModal}
         animationType="slide"

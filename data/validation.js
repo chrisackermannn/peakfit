@@ -1,8 +1,6 @@
-// Workout Validation
 export const validateWorkout = (workoutData) => {
     const errors = [];
   
-    // Check required fields
     if (!workoutData.exercises || !Array.isArray(workoutData.exercises)) {
       errors.push('Exercises must be a valid array');
     }
@@ -11,12 +9,10 @@ export const validateWorkout = (workoutData) => {
       errors.push('Duration must be a number');
     }
   
-    // Validate duration
     if (workoutData.duration <= 0 || workoutData.duration > 600) {
       errors.push('Duration must be between 1 and 600 minutes');
     }
   
-    // Validate exercises
     if (workoutData.exercises) {
       if (workoutData.exercises.length === 0) {
         errors.push('At least one exercise is required');
@@ -39,13 +35,11 @@ export const validateWorkout = (workoutData) => {
   export const validateExercise = (exercise) => {
     const errors = [];
   
-    // Check required fields
     if (!exercise.name) errors.push('Exercise name is required');
     if (typeof exercise.sets !== 'number') errors.push('Sets must be a number');
     if (typeof exercise.reps !== 'number') errors.push('Reps must be a number');
     if (typeof exercise.weight !== 'number') errors.push('Weight must be a number');
   
-    // Validate ranges
     if (exercise.sets <= 0 || exercise.sets > 20) {
       errors.push('Sets must be between 1 and 20');
     }
@@ -59,11 +53,9 @@ export const validateWorkout = (workoutData) => {
     return errors;
   };
   
-  // Stats Validation
   export const validateStats = (statsData) => {
     const errors = [];
   
-    // Check required fields
     if (typeof statsData.weight !== 'number') {
       errors.push('Weight must be a number');
     }
@@ -74,7 +66,6 @@ export const validateWorkout = (workoutData) => {
       errors.push('Measurements must be a valid object');
     }
   
-    // Validate ranges
     if (statsData.weight <= 0 || statsData.weight > 1000) {
       errors.push('Weight must be between 1 and 1000 lbs');
     }
@@ -82,7 +73,6 @@ export const validateWorkout = (workoutData) => {
       errors.push('Body fat percentage must be between 0 and 100');
     }
   
-    // Validate measurements
     if (statsData.measurements) {
       const measurementErrors = validateMeasurements(statsData.measurements);
       errors.push(...measurementErrors);
@@ -95,14 +85,12 @@ export const validateWorkout = (workoutData) => {
     const errors = [];
     const requiredMeasurements = ['chest', 'waist', 'arms', 'legs'];
   
-    // Check if all required measurements are present
     requiredMeasurements.forEach(measurement => {
       if (typeof measurements[measurement] !== 'number') {
         errors.push(`${measurement.charAt(0).toUpperCase() + measurement.slice(1)} measurement must be a number`);
       }
     });
   
-    // Validate ranges
     if (measurements.chest && (measurements.chest <= 0 || measurements.chest > 100)) {
       errors.push('Chest measurement must be between 1 and 100 inches');
     }
