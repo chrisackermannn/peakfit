@@ -1,4 +1,5 @@
-export const exercisesAPI = [
+export const exercisesAPI = 
+[
     { id: 1, name: 'Bench Press', category: 'Chest' },
     { id: 2, name: 'Incline Bench Press', category: 'Chest' },
     { id: 3, name: 'Dumbbell Flys', category: 'Chest' },
@@ -20,4 +21,6 @@ export const exercisesAPI = [
     { id: 19, name: 'Leg Curls', category: 'Legs' },
     { id: 20, name: 'Calf Raises', category: 'Legs' },
   ];
-  
+  export async function getExercises() {
+    return exercisesAPI;
+  }

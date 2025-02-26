@@ -6,7 +6,7 @@ import {
   TextInput, 
   KeyboardAvoidingView, 
   Platform, 
-  Modal 
+  Modal
 } from 'react-native';
 import { TouchableOpacity } from 'react-native';
 import { Button } from 'react-native-paper';
@@ -17,35 +17,45 @@ import {
   GoogleAuthProvider, 
   signInWithCredential 
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, getDocs, query, collection, where } from 'firebase/firestore';
+import { 
+  doc, 
+  getDoc, 
+  setDoc, 
+  getDocs, 
+  query, 
+  collection, 
+  where
+} from 'firebase/firestore';
 import { db } from '../../firebaseConfig';
 import * as Google from 'expo-auth-session/providers/google';
 import { makeRedirectUri } from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 
-
 WebBrowser.maybeCompleteAuthSession();
 
 export default function LoginScreen({ navigation }) {
   const redirectUri = makeRedirectUri({ useProxy: true });
 
+  // Google Auth
   const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com',
+    iosClientId: '1074755682998-95lcclulfbq36di4do14imf2uvcrkaof.apps.googleusercontent.com',
+    webClientId: 'YOUR_WEB_CLIENT_ID.apps.googleusercontent.com',
     redirectUri: makeRedirectUri({ useProxy: false }),
     scopes: ['openid', 'profile', 'email'],
     responseType: 'id_token',
   });
-  
-  
-  
 
   const auth = getAuth();
+
+  // Email/Password vs Registration
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Username Modal
   const [showUsernameModal, setShowUsernameModal] = useState(false);
   const [username, setUsername] = useState('');
   const [tempUserData, setTempUserData] = useState(null);
@@ -56,40 +66,33 @@ export default function LoginScreen({ navigation }) {
     }
   }, [response]);
 
- 
-
-  const handleGoogleResponse = async (response) => {
+  const handleGoogleResponse = async (res) => {
     try {
-      console.log("Full Google Response:", JSON.stringify(response, null, 2));
-  
-      let idToken = response?.authentication?.idToken;
-  
-      if (!idToken && response?.params?.id_token) {
-        idToken = response.params.id_token; // Extract from response.params
+      let idToken = res?.authentication?.idToken;
+      if (!idToken && res?.params?.id_token) {
+        idToken = res.params.id_token;
       }
-  
-      console.log("Extracted ID Token:", idToken);
-  
-      if (!idToken) {
-        throw new Error("Google authentication failed: No ID token received.");
-      }
-  
+      if (!idToken) throw new Error('Google authentication failed: No ID token.');
+
       const credential = GoogleAuthProvider.credential(idToken);
       const userCredential = await signInWithCredential(auth, credential);
-      const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
-  
-      if (userDoc.exists() && userDoc.data().username) {
-        navigation.replace('Tabs');
-      } else {
+      const uid = userCredential.user.uid;
+
+      // Check Firestore doc
+      const userDocRef = doc(db, 'users', uid);
+      const userSnap = await getDoc(userDocRef);
+
+      if (!userSnap.exists() || !userSnap.data().username) {
         setTempUserData(userCredential.user);
         setShowUsernameModal(true);
+      } else {
+        navigation.replace('Tabs');
       }
     } catch (err) {
-      console.error("Google Sign-In Error:", err.message);
+      console.error('Google Sign-In Error:', err.message);
       setError(err.message);
     }
   };
-  
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -100,12 +103,15 @@ export default function LoginScreen({ navigation }) {
       setLoading(true);
       setError('');
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
-      if (userDoc.exists() && userDoc.data().username) {
-        navigation.replace('Tabs');
-      } else {
+      const uid = userCredential.user.uid;
+      const userDocRef = doc(db, 'users', uid);
+      const userSnap = await getDoc(userDocRef);
+
+      if (!userSnap.exists() || !userSnap.data().username) {
         setTempUserData(userCredential.user);
         setShowUsernameModal(true);
+      } else {
+        navigation.replace('Tabs');
       }
     } catch (err) {
       setError(err.message);
@@ -140,6 +146,7 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
+  // After registration or Google sign-in, user must choose a unique username
   const handleSetUsername = async () => {
     if (!username.trim()) {
       setError('Please enter a username');
@@ -148,6 +155,8 @@ export default function LoginScreen({ navigation }) {
     try {
       setLoading(true);
       setError('');
+
+      // Check if username is taken
       const usernameQuery = await getDocs(
         query(collection(db, 'users'), where('username', '==', username.toLowerCase()))
       );
@@ -155,13 +164,18 @@ export default function LoginScreen({ navigation }) {
         setError('Username is already taken');
         return;
       }
-      await setDoc(doc(db, 'users', tempUserData.uid), {
+
+      // Save user doc with the chosen username
+      const uid = tempUserData.uid;
+      const userDocRef = doc(db, 'users', uid);
+      await setDoc(userDocRef, {
         email: tempUserData.email,
         username: username.toLowerCase(),
         displayName: username,
-        createdAt: new Date().toISOString(),
         photoURL: tempUserData.photoURL || null,
+        createdAt: new Date().toISOString(),
       });
+
       setShowUsernameModal(false);
       navigation.replace('Tabs');
     } catch (err) {
@@ -182,6 +196,7 @@ export default function LoginScreen({ navigation }) {
           {isRegister ? 'Register an account' : 'Login to your account'}
         </Text>
         {error ? <Text style={styles.error}>{error}</Text> : null}
+
         <TextInput
           style={styles.input}
           placeholder="Email"
@@ -197,6 +212,7 @@ export default function LoginScreen({ navigation }) {
           onChangeText={setPassword}
           secureTextEntry
         />
+
         {isRegister ? (
           <Button
             mode="contained"
@@ -218,6 +234,7 @@ export default function LoginScreen({ navigation }) {
             Login
           </Button>
         )}
+
         <Button
           mode="outlined"
           onPress={handleGoogleSignIn}
@@ -226,15 +243,20 @@ export default function LoginScreen({ navigation }) {
         >
           Sign in with Google
         </Button>
-        <TouchableOpacity onPress={() => {
-          setError('');
-          setIsRegister(!isRegister);
-        }}>
+
+        <TouchableOpacity
+          onPress={() => {
+            setError('');
+            setIsRegister(!isRegister);
+          }}
+        >
           <Text style={styles.toggleText}>
             {isRegister ? 'Already have an account? Login' : "Don't have an account? Register"}
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* Username Modal */}
       <Modal
         visible={showUsernameModal}
         animationType="slide"
@@ -304,15 +326,15 @@ const styles = StyleSheet.create({
   googleButton: {
     marginBottom: 15,
   },
-  error: {
-    color: 'red',
-    textAlign: 'center',
-    marginBottom: 15,
-  },
   toggleText: {
     color: '#007AFF',
     textAlign: 'center',
     marginTop: 10,
+  },
+  error: {
+    color: 'red',
+    textAlign: 'center',
+    marginBottom: 15,
   },
   modalContainer: {
     flex: 1,
