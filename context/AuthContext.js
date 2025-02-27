@@ -5,7 +5,7 @@
 
 // Example AuthContext implementation that ensures user is correctly set
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import { auth } from '../firebaseConfig'; // Import your Firebase auth instance
+import { auth } from '../Firebase/firebaseConfig'; // Import your Firebase auth instance
 import { onAuthStateChanged } from 'firebase/auth';
 
 const AuthContext = createContext();

@@ -26,7 +26,7 @@ import {
   collection, 
   where
 } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { db } from '../../Firebase/firebaseConfig';
 import * as Google from 'expo-auth-session/providers/google';
 import { makeRedirectUri } from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
