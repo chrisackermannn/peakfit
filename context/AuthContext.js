@@ -5,8 +5,9 @@
 
 // Example AuthContext implementation that ensures user is correctly set
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import { auth } from '../Firebase/firebaseConfig'; // Import your Firebase auth instance
-import { onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from '../Firebase/firebaseConfig'; // Import your Firebase auth instance
+import { onAuthStateChanged, updateProfile } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 
 const AuthContext = createContext();
 
@@ -15,14 +16,26 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Use the actual Firebase auth user
-        setUser({
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          displayName: firebaseUser.displayName || 'User'
-        });
+        try {
+          // Get additional user data from Firestore
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          const userData = userDoc.data();
+          
+          // Combine Firebase auth data with Firestore data
+          setUser({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            displayName: userData?.displayName || userData?.username || 'Anonymous',
+            photoURL: firebaseUser.photoURL,
+            username: userData?.username || '',
+            bio: userData?.bio || '',
+          });
+        } catch (error) {
+          console.error('Error fetching user data:', error);
+          setUser(firebaseUser);
+        }
       } else {
         setUser(null);
       }
@@ -32,11 +45,42 @@ export function AuthProvider({ children }) {
     return () => unsubscribe();
   }, []);
 
+  const updateUserProfile = async (profileData) => {
+    try {
+      if (!auth.currentUser) {
+        throw new Error('No authenticated user');
+      }
+
+      // Update Firebase Auth profile
+      await updateProfile(auth.currentUser, {
+        displayName: profileData.displayName,
+        photoURL: profileData.photoURL
+      });
+
+      // Update local user state with new data
+      setUser(prev => ({
+        ...prev,
+        ...profileData
+      }));
+
+      return true;
+    } catch (error) {
+      console.error('Profile update error:', error);
+      throw error;
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading }}>
-      {children}
+    <AuthContext.Provider value={{ user, loading, updateUserProfile }}>
+      {!loading && children}
     </AuthContext.Provider>
   );
 }
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};

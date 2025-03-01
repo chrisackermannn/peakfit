@@ -1,62 +1,86 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, FlatList } from 'react-native';
-import { Button, Divider, Card, IconButton } from 'react-native-paper';
+import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, FlatList, ActivityIndicator } from 'react-native';
+import { Button, Divider, Card, IconButton, Avatar } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
 import { getStats, getUserWorkouts } from '../data/firebaseHelpers';
-import { format } from 'date-fns'; // You may need to install this package
+import { format } from 'date-fns';
 
-export default function ProfileScreen({ navigation }) {
+const defaultAvatar = require('../assets/default-avatar.png');
+
+const ProfileScreen = ({ navigation }) => {
   const { user, logout } = useAuth();
   const [stats, setStats] = useState({});
   const [workouts, setWorkouts] = useState([]);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [totalWeight, setTotalWeight] = useState(0);
+  const [badges, setBadges] = useState([]);
 
   useEffect(() => {
-    if (user && user.uid) {
+    if (user?.uid) {
       loadUserData();
     } else {
-      console.log("User not loaded yet.");
       setLoading(false);
     }
   }, [user]);
 
+  // Add refresh listener when screen is focused
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      if (user?.uid) loadUserData();
+    });
+    return unsubscribe;
+  }, [navigation, user]);
+
+  const calculateTotalWeight = (workouts) => {
+    return workouts.reduce((total, workout) => {
+      const workoutTotal = workout.exercises.reduce((subtotal, exercise) => {
+        return subtotal + (exercise.weight * exercise.sets * exercise.reps);
+      }, 0);
+      return total + workoutTotal;
+    }, 0);
+  };
+
   const loadUserData = async () => {
     try {
       setLoading(true);
-      // Load stats
-      const userStats = await getStats(user.uid);
-      console.log("Fetched stats:", userStats);
-      if (userStats && userStats.length > 0) {
+      const [userStats, userWorkouts] = await Promise.all([
+        getStats(user.uid),
+        getUserWorkouts(user.uid)
+      ]);
+
+      if (userWorkouts?.length > 0) {
+        setWorkouts(userWorkouts);
+        const total = calculateTotalWeight(userWorkouts);
+        setTotalWeight(total);
+
+        // Calculate badges based on total weight
+        const earnedBadges = calculateBadges(total);
+        setBadges(earnedBadges);
+      }
+
+      if (userStats?.length > 0) {
         setStats(userStats[0]);
       }
-      
-      // Load workouts
-      const userWorkouts = await getUserWorkouts(user.uid);
-      console.log("Fetched workouts:", userWorkouts);
-      setWorkouts(userWorkouts || []);
-      
       setError(null);
     } catch (err) {
       console.error("Error loading user data:", err);
       setError(err.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
+  // Format helpers
   const formatDate = (timestamp) => {
     if (!timestamp) return 'Unknown date';
-    
-    // Handle Firestore timestamps which might be in seconds
     const date = timestamp.toDate ? timestamp.toDate() : 
-                 // Or handle date objects or timestamp values
-                 (timestamp instanceof Date ? timestamp : new Date(timestamp));
-    
+                (timestamp instanceof Date ? timestamp : new Date(timestamp));
     return format(date, 'MMM d, yyyy');
   };
 
-  // Format workout duration from seconds to mm:ss
   const formatDuration = (seconds) => {
     if (!seconds && seconds !== 0) return '--';
     const mins = Math.floor(seconds / 60);
@@ -67,52 +91,65 @@ export default function ProfileScreen({ navigation }) {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <Text>Loading profile data...</Text>
+        <ActivityIndicator size="large" color="#007AFF" />
       </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView 
+      style={styles.container}
+      contentContainerStyle={styles.contentContainer}
+      showsVerticalScrollIndicator={false}
+    >
       {error && <Text style={styles.errorText}>{error}</Text>}
       
-      {/* Profile Header */}
       <View style={styles.header}>
-        <Image
-          source={{ uri: user.photoURL || 'https://pbs.twimg.com/profile_images/1169607372651847688/XVap8w7n_400x400.jpg' }}
-          style={styles.profileImage}
-        />
-        <Text style={styles.name}>{user.displayName || 'User'}</Text>
-        <Text style={styles.bio}>Fitness Enthusiast | Strength Training | 175 lbs Goal</Text>
-        <Button
-          mode="contained"
-          style={styles.editProfileButton}
+        <TouchableOpacity 
+          style={styles.avatarContainer}
           onPress={() => navigation.navigate('EditProfile')}
         >
-          Edit Profile
-        </Button>
+          <Image
+            source={user?.photoURL ? { uri: user.photoURL } : defaultAvatar}
+            style={styles.profileImage}
+            defaultSource={defaultAvatar}
+          />
+          <View style={styles.editBadge}>
+            <IconButton icon="pencil" size={16} color="#fff" />
+          </View>
+        </TouchableOpacity>
+
+        <View style={styles.userInfo}>
+          <Text style={styles.name}>{user?.displayName || user?.username || 'Anonymous'}</Text>
+          <Text style={styles.bio} numberOfLines={3}>{user?.bio || 'No bio yet'}</Text>
+          <Button
+            mode="outlined"
+            onPress={() => navigation.navigate('EditProfile')}
+            style={styles.editButton}
+            labelStyle={styles.editButtonLabel}
+          >
+            Edit Profile
+          </Button>
+        </View>
       </View>
 
-      <Divider style={styles.divider} />
-
-      {/* Stats Section */}
       <View style={styles.statsContainer}>
-        <View style={styles.statBox}>
-          <Text style={styles.statNumber}>
-            {stats && stats.weight ? stats.weight : '--'}
-          </Text>
-          <Text style={styles.statLabel}>Weight (lbs)</Text>
-        </View>
-        <View style={styles.statBox}>
+        <Card style={styles.statCard}>
           <Text style={styles.statNumber}>{workouts.length}</Text>
           <Text style={styles.statLabel}>Workouts</Text>
-        </View>
-        <View style={styles.statBox}>
+        </Card>
+        
+        <Card style={styles.statCard}>
           <Text style={styles.statNumber}>
-            {stats && stats.bodyFat ? stats.bodyFat : '--'}
+            {totalWeight.toLocaleString()}
           </Text>
-          <Text style={styles.statLabel}>Body Fat %</Text>
-        </View>
+          <Text style={styles.statLabel}>Total lbs Lifted</Text>
+        </Card>
+        
+        <Card style={styles.statCard}>
+          <Text style={styles.statNumber}>{badges.length}</Text>
+          <Text style={styles.statLabel}>Badges Earned</Text>
+        </Card>
       </View>
 
       <Divider style={styles.divider} />
@@ -226,64 +263,103 @@ export default function ProfileScreen({ navigation }) {
       </TouchableOpacity>
     </ScrollView>
   );
-}
+};
+
+// Add badge calculation helper
+const calculateBadges = (totalWeight) => {
+  const badges = [];
+  
+  if (totalWeight >= 1000) badges.push({ id: '1k', name: '1,000 lbs Club' });
+  if (totalWeight >= 10000) badges.push({ id: '10k', name: '10,000 lbs Club' });
+  if (totalWeight >= 100000) badges.push({ id: '100k', name: '100,000 lbs Club' });
+  // Add more badge tiers as needed
+  
+  return badges;
+};
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: '#fff', 
-    padding: 20 
-  },
-  loadingContainer: {
+  container: {
     flex: 1,
+    backgroundColor: '#fff',
+  },
+  contentContainer: {
+    padding: 16,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  avatarContainer: {
+    position: 'relative',
+    marginRight: 16,
+  },
+  profileImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#f5f5f5',
+  },
+  editBadge: {
+    position: 'absolute',
+    right: -4,
+    bottom: -4,
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+    width: 24,
+    height: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff'
+    borderWidth: 2,
+    borderColor: '#fff',
   },
-  header: { 
-    alignItems: 'center', 
-    marginBottom: 20 
+  userInfo: {
+    flex: 1,
   },
-  profileImage: { 
-    width: 100, 
-    height: 100, 
-    borderRadius: 50, 
-    marginBottom: 10 
+  name: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 4,
   },
-  name: { 
-    fontSize: 22, 
-    fontWeight: 'bold' 
+  bio: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 12,
+    lineHeight: 22,
   },
-  bio: { 
-    fontSize: 14, 
-    color: '#777', 
-    textAlign: 'center', 
-    marginVertical: 5 
+  editButton: {
+    borderColor: '#007AFF',
+    borderRadius: 8,
   },
-  editProfileButton: { 
-    marginTop: 10, 
-    backgroundColor: '#007AFF' 
+  editButtonLabel: {
+    fontSize: 14,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 24,
+  },
+  statCard: {
+    flex: 1,
+    marginHorizontal: 4,
+    padding: 16,
+    alignItems: 'center',
+    elevation: 2,
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#007AFF',
+  },
+  statLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
   },
   divider: { 
     marginVertical: 15, 
     height: 1, 
     backgroundColor: '#ddd' 
-  },
-  statsContainer: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-around', 
-    marginVertical: 10 
-  },
-  statBox: { 
-    alignItems: 'center' 
-  },
-  statNumber: { 
-    fontSize: 20, 
-    fontWeight: 'bold' 
-  },
-  statLabel: { 
-    fontSize: 14, 
-    color: '#777' 
   },
   measurementsContainer: { 
     marginVertical: 10 
@@ -390,3 +466,5 @@ const styles = StyleSheet.create({
     backgroundColor: '#007AFF'
   }
 });
+
+export default ProfileScreen;

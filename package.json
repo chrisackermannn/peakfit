@@ -27,6 +27,7 @@
     "expo-auth-session": "~6.0.3",
     "expo-crypto": "~14.0.2",
     "expo-google-sign-in": "^10.2.0",
+    "expo-image-picker": "~16.0.6",
     "expo-random": "^14.0.1",
     "expo-status-bar": "~2.0.1",
     "express": "^4.21.2",
@@ -45,9 +46,7 @@
     "react-native-web": "~0.19.13"
   },
   "devDependencies": {
-    "@babel/core": "^7.25.2",
-    "@types/react": "~18.3.12",
-    "typescript": "^5.3.3"
+    "@babel/core": "^7.25.2"
   },
   "private": true
 }

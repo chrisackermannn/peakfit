@@ -4,19 +4,15 @@ import {
   Text, 
   StyleSheet, 
   TextInput, 
-  KeyboardAvoidingView, 
-  Platform, 
-  Modal
+  KeyboardAvoidingView,
+  Platform,
+  Modal,
+  Image,
+  Dimensions
 } from 'react-native';
 import { TouchableOpacity } from 'react-native';
 import { Button } from 'react-native-paper';
-import { 
-  getAuth, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  GoogleAuthProvider, 
-  signInWithCredential 
-} from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
 import { 
   doc, 
   getDoc, 
@@ -24,30 +20,42 @@ import {
   getDocs, 
   query, 
   collection, 
-  where
+  where,
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../../Firebase/firebaseConfig';
 import * as Google from 'expo-auth-session/providers/google';
-import { makeRedirectUri } from 'expo-auth-session';
+import { makeRedirectUri, ResponseType } from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 
 WebBrowser.maybeCompleteAuthSession();
 
-export default function LoginScreen({ navigation }) {
-  const redirectUri = makeRedirectUri({ useProxy: true });
+// Get redirect URI for current environment
+const redirectUri = makeRedirectUri({
+  scheme: 'peakfit',
+  path: 'auth'
+});
 
-  // Google Auth
+const googleConfig = {
+  iosClientId: '1074755682998-95lcclulfbq36di4do14imf2uvcrkaof.apps.googleusercontent.com',
+  androidClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com',
+  expoClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com'
+};
+
+export default function LoginScreen({ navigation }) {
   const [request, response, promptAsync] = Google.useAuthRequest({
-    iosClientId: '1074755682998-95lcclulfbq36di4do14imf2uvcrkaof.apps.googleusercontent.com',
-    webClientId: 'YOUR_WEB_CLIENT_ID.apps.googleusercontent.com',
-    redirectUri: makeRedirectUri({ useProxy: false }),
-    scopes: ['openid', 'profile', 'email'],
-    responseType: 'id_token',
+    androidClientId: googleConfig.androidClientId,
+    iosClientId: googleConfig.iosClientId, 
+    expoClientId: googleConfig.expoClientId,
+    responseType: ResponseType.IdToken,
+    redirectUri,
+    scopes: ['profile', 'email'],
+    usePKCE: true,
+    proxy: true // Enable proxy for development
   });
 
   const auth = getAuth();
-
   // Email/Password vs Registration
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
@@ -99,6 +107,7 @@ export default function LoginScreen({ navigation }) {
       setError('Please fill in all fields');
       return;
     }
+
     try {
       setLoading(true);
       setError('');
@@ -106,7 +115,6 @@ export default function LoginScreen({ navigation }) {
       const uid = userCredential.user.uid;
       const userDocRef = doc(db, 'users', uid);
       const userSnap = await getDoc(userDocRef);
-
       if (!userSnap.exists() || !userSnap.data().username) {
         setTempUserData(userCredential.user);
         setShowUsernameModal(true);
@@ -125,6 +133,7 @@ export default function LoginScreen({ navigation }) {
       setError('Please fill in all fields');
       return;
     }
+
     try {
       setLoading(true);
       setError('');
@@ -140,9 +149,27 @@ export default function LoginScreen({ navigation }) {
 
   const handleGoogleSignIn = async () => {
     try {
-      await promptAsync();
-    } catch (err) {
-      setError(err.message);
+      const result = await promptAsync();
+      
+      if (result?.type === 'success') {
+        const { id_token } = result.params;
+        const credential = GoogleAuthProvider.credential(id_token);
+        const auth = getAuth();
+        const userCredential = await signInWithCredential(auth, credential);
+        
+        const userDocRef = doc(db, 'users', userCredential.user.uid);
+        const userDoc = await getDoc(userDocRef);
+        
+        if (!userDoc.exists() || !userDoc.data().username) {
+          setTempUserData(userCredential.user);
+          setShowUsernameModal(true);
+        } else {
+          navigation.replace('Tabs');
+        }
+      }
+    } catch (error) {
+      console.error('Google Sign In Error:', error);
+      setError('Failed to sign in with Google. Please try again.');
     }
   };
 
@@ -152,34 +179,52 @@ export default function LoginScreen({ navigation }) {
       setError('Please enter a username');
       return;
     }
+
     try {
       setLoading(true);
       setError('');
+
+      // Validate username format
+      if (username.length < 3) {
+        setError('Username must be at least 3 characters');
+        return;
+      }
+
+      if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+        setError('Username can only contain letters, numbers and underscore');
+        return;
+      }
 
       // Check if username is taken
       const usernameQuery = await getDocs(
         query(collection(db, 'users'), where('username', '==', username.toLowerCase()))
       );
+
       if (!usernameQuery.empty) {
         setError('Username is already taken');
         return;
       }
 
-      // Save user doc with the chosen username
-      const uid = tempUserData.uid;
-      const userDocRef = doc(db, 'users', uid);
+      if (!tempUserData?.uid) {
+        throw new Error('User data not found');
+      }
+
+      // Create user document
+      const userDocRef = doc(db, 'users', tempUserData.uid);
       await setDoc(userDocRef, {
         email: tempUserData.email,
         username: username.toLowerCase(),
         displayName: username,
         photoURL: tempUserData.photoURL || null,
-        createdAt: new Date().toISOString(),
-      });
+        createdAt: serverTimestamp(),
+      }, { merge: true });
 
       setShowUsernameModal(false);
       navigation.replace('Tabs');
+
     } catch (err) {
-      setError(err.message);
+      console.error('Error setting username:', err);
+      setError(err.message || 'Error creating user profile');
     } finally {
       setLoading(false);
     }
@@ -191,67 +236,73 @@ export default function LoginScreen({ navigation }) {
       style={styles.container}
     >
       <View style={styles.innerContainer}>
-        <Text style={styles.title}>PeakFit</Text>
-        <Text style={styles.subtitle}>
-          {isRegister ? 'Register an account' : 'Login to your account'}
-        </Text>
+        <View style={styles.logoContainer}>
+          <Image
+            source={require('../../assets/logo.png')} // Add your logo
+            style={styles.logo}
+            resizeMode="contain"
+          />
+          <Text style={styles.title}>PeakFit</Text>
+          <Text style={styles.subtitle}>
+            {isRegister ? 'Create your account' : 'Welcome back'}
+          </Text>
+        </View>
+
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-        />
+        <View style={styles.formContainer}>
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+          />
 
-        {isRegister ? (
           <Button
             mode="contained"
-            onPress={handleRegister}
+            onPress={isRegister ? handleRegister : handleLogin}
             loading={loading}
-            style={styles.button}
+            style={styles.primaryButton}
             disabled={loading}
           >
-            Register
+            {isRegister ? 'Create Account' : 'Sign In'}
           </Button>
-        ) : (
-          <Button
-            mode="contained"
-            onPress={handleLogin}
-            loading={loading}
-            style={styles.button}
-            disabled={loading}
-          >
-            Login
-          </Button>
-        )}
 
-        <Button
-          mode="outlined"
-          onPress={handleGoogleSignIn}
-          style={styles.googleButton}
-          icon="google"
-        >
-          Sign in with Google
-        </Button>
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>or</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <Button
+            mode="outlined"
+            onPress={handleGoogleSignIn}
+            style={styles.googleButton}
+            icon="google"
+            disabled={loading}
+          >
+            Continue with Google
+          </Button>
+        </View>
 
         <TouchableOpacity
           onPress={() => {
             setError('');
             setIsRegister(!isRegister);
           }}
+          style={styles.toggleContainer}
         >
           <Text style={styles.toggleText}>
-            {isRegister ? 'Already have an account? Login' : "Don't have an account? Register"}
+            {isRegister ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
           </Text>
         </TouchableOpacity>
       </View>
@@ -296,45 +347,73 @@ const styles = StyleSheet.create({
   },
   innerContainer: {
     flex: 1,
-    padding: 20,
-    justifyContent: 'center',
+    padding: 24,
+    justifyContent: 'space-between',
+  },
+  logoContainer: {
+    alignItems: 'center',
+    marginTop: 60,
+  },
+  logo: {
+    width: 100,
+    height: 100,
+    marginBottom: 16,
   },
   title: {
     fontSize: 32,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 10,
+    fontWeight: '700',
     color: '#007AFF',
+    marginBottom: 8,
   },
   subtitle: {
     fontSize: 18,
-    textAlign: 'center',
-    marginBottom: 30,
     color: '#666',
+    marginBottom: 32,
+  },
+  formContainer: {
+    width: '100%',
   },
   input: {
     backgroundColor: '#f5f5f5',
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 15,
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
     fontSize: 16,
   },
-  button: {
-    marginBottom: 15,
-    padding: 5,
+  primaryButton: {
+    padding: 4,
+    borderRadius: 12,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 24,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E0E0E0',
+  },
+  dividerText: {
+    marginHorizontal: 16,
+    color: '#666',
   },
   googleButton: {
-    marginBottom: 15,
+    borderRadius: 12,
+    borderColor: '#E0E0E0',
+  },
+  toggleContainer: {
+    marginTop: 24,
+    alignItems: 'center',
   },
   toggleText: {
     color: '#007AFF',
-    textAlign: 'center',
-    marginTop: 10,
+    fontSize: 16,
   },
   error: {
-    color: 'red',
+    color: '#FF3B30',
     textAlign: 'center',
-    marginBottom: 15,
+    marginBottom: 16,
   },
   modalContainer: {
     flex: 1,
