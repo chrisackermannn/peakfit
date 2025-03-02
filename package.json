@@ -23,7 +23,7 @@
     "cors": "^2.8.5",
     "date-fns": "^4.1.0",
     "dotenv": "^16.4.7",
-    "expo": "~52.0.33",
+    "expo": "^52.0.37",
     "expo-auth-session": "~6.0.3",
     "expo-crypto": "~14.0.2",
     "expo-google-sign-in": "^10.2.0",
