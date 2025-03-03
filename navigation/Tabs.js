@@ -3,6 +3,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import HomeScreen from '../screens/HomeScreen.js';
 import WorkoutScreen from '../screens/WorkoutScreen.js';
 import ProfileScreen from '../screens/ProfileScreen.js';
+import communityScreen from '../screens/Community.js';
 import { Ionicons } from '@expo/vector-icons';
 
 const Tab = createBottomTabNavigator();
@@ -19,6 +20,8 @@ export default function Tabs() {
             iconName = focused ? 'fitness' : 'fitness-outline';
           } else if (route.name === 'Profile') {
             iconName = focused ? 'person' : 'person-outline';
+          } else if (route.name === 'community') {
+            iconName = focused ? 'community' : 'community-outline';
           }
           return <Ionicons name={iconName} size={size} color={color} />;
         },
@@ -35,6 +38,7 @@ export default function Tabs() {
         ),
       }} />
       <Tab.Screen name="Workout" component={WorkoutScreen} options={{ headerTitle: 'Workout' }} />
+      <Tab.Screen name="Community" component={communityScreen} options={{ headerTitle: 'Community' }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ headerTitle: 'Profile' }} />
     </Tab.Navigator>
   );
