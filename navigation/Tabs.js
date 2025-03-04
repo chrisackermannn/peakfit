@@ -27,7 +27,16 @@ export default function Tabs() {
         },
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} options={{ headerTitle: 'PeakFit' }} />
+      <Tab.Screen name="Home" component={HomeScreen} options={{
+        headerTitle: 'PeakFit',
+        tabBarIcon: ({ focused, color, size }) => (
+          <Ionicons 
+            name={focused ? 'home' : 'home-outline'} 
+            size={size} 
+            color={color} 
+          />
+        ),
+      }} />
       <Tab.Screen name="Workout" component={WorkoutScreen} options={{ headerTitle: 'Workout' }} />
       <Tab.Screen name="Community" component={communityScreen} options={{ headerTitle: 'Community' }} />
       <Tab.Screen name="Profile" component={ProfileScreen} options={{ headerTitle: 'Profile' }} />

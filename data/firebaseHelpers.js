@@ -1,4 +1,4 @@
-import { db } from '../firebaseConfig';
+import { db } from '../Firebase/firebaseConfig';
 import {
   collection,
   doc,
@@ -11,7 +11,9 @@ import {
   query,
   where,
   orderBy,
-  serverTimestamp
+  serverTimestamp,
+  arrayUnion,
+  limit
 } from 'firebase/firestore';
 import { validateWorkout, validateStats } from './validation';
 
@@ -106,16 +108,36 @@ export const deleteStats = async (userId, statId) => {
  */
 export async function saveWorkoutToProfile(userId, workoutData) {
   try {
-    // If needed, do local validation:
-    // const errors = validateWorkout(workoutData);
-    // if (errors.length > 0) {
-    //   throw new Error(`Invalid workout data: ${errors.join(', ')}`);
-    // }
+    // Make sure we have the required fields to match security rules
+    if (!workoutData.exercises) {
+      throw new Error('Workout must include exercises array');
+    }
+
+    // Calculate totalWeight if not provided, to satisfy security rules
+    if (!workoutData.totalWeight || typeof workoutData.totalWeight !== 'number' || workoutData.totalWeight <= 0) {
+      let totalWeight = 0;
+      // Sum up weights from exercises
+      if (Array.isArray(workoutData.exercises)) {
+        workoutData.exercises.forEach(exercise => {
+          if (exercise.sets && Array.isArray(exercise.sets)) {
+            exercise.sets.forEach(set => {
+              if (set.weight && typeof set.weight === 'number') {
+                totalWeight += set.weight * (set.reps || 1);
+              }
+            });
+          }
+        });
+      }
+      
+      // Ensure totalWeight is greater than 0
+      workoutData.totalWeight = totalWeight > 0 ? totalWeight : 1;
+    }
 
     // Ensure we store a Firestore timestamp for 'date'
-    // If the caller didn't pass date, we override it:
     const docData = {
       ...workoutData,
+      exercises: workoutData.exercises || [],
+      totalWeight: workoutData.totalWeight,
       date: serverTimestamp(),
     };
 
@@ -135,6 +157,7 @@ export async function saveWorkoutToProfile(userId, workoutData) {
     const workoutsRef = collection(userDocRef, 'workouts');
     const newDocRef = await addDoc(workoutsRef, docData);
     console.log(`Workout doc created: users/${userId}/workouts/${newDocRef.id}`);
+    return newDocRef.id;
   } catch (error) {
     console.error('Error saving workout:', error);
     throw error;
@@ -166,6 +189,145 @@ export async function deleteWorkout(userId, workoutId) {
     console.log('Workout deleted successfully');
   } catch (error) {
     console.error('Error deleting workout:', error);
+    throw error;
+  }
+}
+
+export async function saveWorkoutGlobally(workoutData) {
+  try {
+    if (!workoutData.userId || !workoutData.userDisplayName) {
+      throw new Error('Missing user information');
+    }
+
+    // Ensure required fields are present for security rules
+    if (!workoutData.exercises) {
+      workoutData.exercises = [];
+    }
+
+    // Calculate total weight if not provided
+    if (!workoutData.totalWeight || typeof workoutData.totalWeight !== 'number') {
+      let totalWeight = 0;
+      // Sum up weights from exercises
+      if (Array.isArray(workoutData.exercises)) {
+        workoutData.exercises.forEach(exercise => {
+          if (exercise.sets && Array.isArray(exercise.sets)) {
+            exercise.sets.forEach(set => {
+              if (set.weight && typeof set.weight === 'number') {
+                totalWeight += set.weight * (set.reps || 1);
+              }
+            });
+          }
+        });
+      }
+      workoutData.totalWeight = totalWeight > 0 ? totalWeight : 1;
+    }
+
+    // Create document ID without using __name__
+    const customDocId = `${workoutData.userId}_${Date.now()}`;
+    const globalWorkoutsRef = doc(db, 'globalWorkouts', customDocId);
+
+    const docData = {
+      ...workoutData,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      likes: [],
+      comments: []
+    };
+
+    // Use setDoc without merge option
+    await setDoc(globalWorkoutsRef, docData);
+
+    // Save to user's profile
+    await saveWorkoutToProfile(workoutData.userId, {
+      ...workoutData,
+      isPublic: true,
+      globalWorkoutId: customDocId
+    });
+
+    return customDocId;
+  } catch (error) {
+    console.error('Error saving global workout:', error);
+    throw error;
+  }
+}
+
+// Add functions for likes/comments
+export async function toggleLike(workoutId, userId) {
+  try {
+    const workoutRef = doc(db, 'globalWorkouts', workoutId);
+    const workoutDoc = await getDoc(workoutRef);
+    const likes = workoutDoc.data().likes || [];
+
+    if (likes.includes(userId)) {
+      await updateDoc(workoutRef, {
+        likes: likes.filter(id => id !== userId)
+      });
+    } else {
+      await updateDoc(workoutRef, {
+        likes: [...likes, userId]
+      });
+    }
+  } catch (error) {
+    console.error('Error toggling like:', error);
+    throw error;
+  }
+}
+
+export async function getGlobalWorkouts() {
+  try {
+    const q = query(
+      collection(db, 'globalWorkouts'),
+      orderBy('createdAt', 'desc'),
+      limit(20)
+    );
+    
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt?.toDate() // Convert timestamp to Date
+    }));
+  } catch (error) {
+    console.error('Error fetching global workouts:', error);
+    throw error;
+  }
+}
+
+// data/firebaseHelpers.js
+
+// Remove the old addComment function
+export async function addComment(workoutId, commentData) {
+  try {
+    // Validate inputs
+    if (!workoutId || !commentData) {
+      throw new Error('Missing required comment data');
+    }
+
+    const workoutRef = doc(db, 'globalWorkouts', workoutId);
+    const workoutDoc = await getDoc(workoutRef);
+
+    if (!workoutDoc.exists()) {
+      throw new Error('Workout not found');
+    }
+
+    // Structure comment with required fields
+    const comment = {
+      id: Date.now().toString(),
+      userId: commentData.userId,
+      userDisplayName: commentData.userDisplayName,
+      userPhotoURL: commentData.userPhotoURL,
+      text: commentData.text,
+      createdAt: new Date().toISOString()
+    };
+
+    // Update document with new comment
+    await updateDoc(workoutRef, {
+      comments: arrayUnion(comment)
+    });
+
+    return comment.id;
+  } catch (error) {
+    console.error('Error adding comment:', error);
     throw error;
   }
 }

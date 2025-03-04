@@ -12,19 +12,53 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "scheme": "peakfit",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.PeakFit"
+      "bundleIdentifier": "com.anonymous.PeakFit",
+      "googleServicesFile": "GoogleService-Info.plist",
+      "config": {
+        "googleSignIn": {
+          "reservedClientId": "com.googleusercontent.apps.1074755682998-95lcclulfbq36di4do14imf2uvcrkaof"
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.anonymous.PeakFit"
+      "package": "com.anonymous.PeakFit",
+      "googleServicesFile": "google-services.json"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "config": {
+        "google": {
+          "clientId": "1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com"
+        }
+      }
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow PeakFit to access your photos to update your profile picture.",
+          "cameraPermission": "Allow PeakFit to access your camera to take profile pictures."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "your-project-id"
+      },
+      "googleAuth": {
+        "redirectUris": [
+          "exp://192.168.1.156:8081/--/auth",
+          "exp://localhost:19000/--/auth",
+          "peakfit://auth"
+        ]
+      }
     }
   }
 }

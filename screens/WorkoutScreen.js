@@ -8,15 +8,15 @@ import {
   Modal,
   StyleSheet,
   ScrollView,
-  ActivityIndicator
+  ActivityIndicator,
+  Animated
 } from 'react-native';
-import { Button } from 'react-native-paper';
-// If you have a function getExercises in your exerciseAPI file:
+import { Button, Card, IconButton } from 'react-native-paper';
 import { exercisesAPI, getExercises } from '../data/exerciseAPI';
-import { saveWorkoutToProfile } from '../data/firebaseHelpers';
+import { saveWorkoutToProfile, saveWorkoutGlobally } from '../data/firebaseHelpers';
 import { useAuth } from '../context/AuthContext';
-// If you only rely on the subcollection approach, you need serverTimestamp if your rules require a timestamp
 import { serverTimestamp } from 'firebase/firestore';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 export default function WorkoutScreen() {
   const { user } = useAuth();
@@ -34,129 +34,201 @@ export default function WorkoutScreen() {
   const [timer, setTimer] = useState(0);
   const [isTiming, setIsTiming] = useState(false);
   const [loadingExercises, setLoadingExercises] = useState(false);
-  const [exercises, setExercises] = useState([]); // if you want to store the fetched exercises
+  const [exercises, setExercises] = useState([]);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [postLoading, setPostLoading] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
   const timerRef = useRef(null);
 
   useEffect(() => {
-    fetchExercisesFromAPI();
+    let isMounted = true;
+    const loadExercises = async () => {
+      setLoadingExercises(true);
+      try {
+        const exerciseList = await getExercises();
+        if (isMounted) {
+          setExercises(exerciseList);
+          setFilteredExercises(exerciseList);
+        }
+      } catch (error) {
+        console.error('Error fetching exercises:', error);
+      } finally {
+        if (isMounted) {
+          setLoadingExercises(false);
+        }
+      }
+    };
+    loadExercises();
+    return () => { isMounted = false; }
   }, []);
 
-  // If you only rely on the static exercisesAPI, remove this function or call it differently
-  const fetchExercisesFromAPI = async () => {
-    try {
-      setLoadingExercises(true);
-      // Attempt to call your function that fetches exercises
-      const result = await getExercises();
-      setExercises(result);
-      setFilteredExercises([]);
-    } catch (error) {
-      console.error('Failed to fetch exercises:', error);
-    } finally {
-      setLoadingExercises(false);
+  useEffect(() => {
+    if (isTiming) {
+      timerRef.current = setInterval(() => {
+        setTimer((timer) => timer + 1);
+      }, 1000);
+    } else {
+      clearInterval(timerRef.current);
     }
+    return () => clearInterval(timerRef.current);
+  }, [isTiming]);
+
+  const startWorkout = () => {
+    setIsWorkoutStarted(true);
+    setIsTiming(true);
+  };
+
+  const endWorkout = () => {
+    setIsTiming(false);
+    setIsWorkoutEnded(true);
   };
 
   const handleSearch = (text) => {
     setSearchQuery(text);
-    if (text === '') {
-      setFilteredExercises([]);
-    } else {
-      // Filter your local 'exercisesAPI' array
-      const filtered = exercisesAPI.filter((ex) =>
-        ex.name.toLowerCase().includes(text.toLowerCase())
-      );
-      setFilteredExercises(filtered);
+    const filtered = exercises.filter(exercise =>
+      exercise.name.toLowerCase().includes(text.toLowerCase())
+    );
+    setFilteredExercises(filtered);
+  };
+
+  const selectExercise = (exercise) => {
+    setSelectedExercise(exercise);
+  };
+
+  const addWorkout = () => {
+    if (!selectedExercise || !weight || !reps || !sets) {
+      alert('Please fill in all exercise details.');
+      return;
     }
+    const newWorkout = {
+      id: Date.now().toString(),
+      name: selectedExercise.name,
+      weight: parseFloat(weight),
+      reps: parseInt(reps),
+      sets: parseInt(sets),
+    };
+    setWorkouts([...workouts, newWorkout]);
+    setModalVisible(false);
+    setSelectedExercise('');
+    setWeight('');
+    setReps('');
+    setSets('');
   };
 
-  const startWorkout = () => {
-    console.log('Workout started');
-    setIsWorkoutStarted(true);
-    setIsWorkoutEnded(false);
-    setTimer(0);
-    setIsTiming(true);
-    timerRef.current = setInterval(() => {
-      setTimer((prevTime) => prevTime + 1);
-    }, 1000);
-  };
-
-  const stopWorkout = () => {
-    console.log('Workout stopped');
-    setIsTiming(false);
-    setIsWorkoutEnded(true);
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  };
-
-  const addExerciseToWorkout = () => {
-    if (selectedExercise && weight && reps && sets) {
-      const newItem = {
-        name: selectedExercise,
-        weight: parseFloat(weight),
-        reps: parseInt(reps),
-        sets: parseInt(sets)
-      };
-      setWorkouts((prev) => [...prev, newItem]);
-      console.log('Added exercise to local array:', newItem);
-      // Reset fields
-      setModalVisible(false);
-      setSearchQuery('');
-      setSelectedExercise('');
-      setWeight('');
-      setReps('');
-      setSets('');
-    }
-  };
-
-  const deleteWorkoutItem = (index) => {
-    const updated = workouts.filter((_, i) => i !== index);
+  const deleteWorkout = (index) => {
+    const updated = [...workouts];
+    updated.splice(index, 1);
     setWorkouts(updated);
     console.log('Deleted exercise at index:', index);
   };
 
-  const saveWorkout = async () => {
-    // Check if user is truly logged in
-    if (!user || !user.uid) {
-      console.log('No user is logged in; cannot save workout.');
+  const saveToProfile = async () => {
+    if (!user?.uid) {
+      alert('Please login to save workouts');
       return;
     }
-    
-    // Make sure there's something to save
-    if (workouts.length === 0) {
-      console.log('No exercises to save. Aborting saveWorkout.');
-      return;
-    }
-    
+
     try {
-      // Log the actual user ID we're using
-      console.log('Saving workout using actual authenticated user ID:', user.uid);
-      
-      // Build the object to pass to Firestore
+      setSaveLoading(true);
       const workoutData = {
         date: serverTimestamp(),
         duration: timer,
         exercises: workouts,
         notes: '',
+        isPublic: false
       };
-  
-      console.log('Attempting to save workout for user:', user.uid, workoutData);
-      // Calls the subcollection approach in firebaseHelpers.js
+
       await saveWorkoutToProfile(user.uid, workoutData);
-  
-      console.log('Workout saved successfully!');
-      // Reset local state
+      
+      Animated.sequence([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true
+        }),
+        Animated.delay(1000),
+        Animated.timing(fadeAnim, {
+          toValue: 0, 
+          duration: 500,
+          useNativeDriver: true
+        })
+      ]).start();
+
       setWorkouts([]);
       setIsWorkoutStarted(false);
       setIsWorkoutEnded(false);
       setTimer(0);
+
     } catch (error) {
-      console.error('Error saving workout:', error);
+      alert('Error saving workout: ' + error.message);
+    } finally {
+      setSaveLoading(false);
     }
   };
 
-  // Debug: see if we have a valid user
+  const postWorkout = async () => {
+    if (!user?.uid) {
+      alert('Please login to post workouts');
+      return;
+    }
+
+    try {
+      setPostLoading(true);
+      
+      // Validate workout data
+      if (!workouts.length) {
+        throw new Error('Cannot share empty workout');
+      }
+
+      const workoutData = {
+        date: serverTimestamp(),
+        duration: timer,
+        exercises: workouts,
+        notes: '',
+        type: 'workout',
+        visibility: 'public',
+        userId: user.uid,
+        userDisplayName: user.displayName || 'Anonymous',
+        userPhotoURL: user.photoURL || null,
+        likes: 0,
+        comments: [],
+        metrics: {
+          totalExercises: workouts.length,
+          totalSets: workouts.reduce((acc, curr) => acc + curr.sets, 0),
+          totalReps: workouts.reduce((acc, curr) => acc + (curr.sets * curr.reps), 0)
+        }
+      };
+
+      await saveWorkoutGlobally(workoutData);
+      
+      // Success animation
+      Animated.sequence([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true
+        }),
+        Animated.delay(1000),
+        Animated.timing(fadeAnim, {
+          toValue: 0,
+          duration: 500,
+          useNativeDriver: true
+        })
+      ]).start();
+
+      // Reset state
+      setWorkouts([]);
+      setIsWorkoutStarted(false);
+      setIsWorkoutEnded(false); 
+      setTimer(0);
+
+    } catch (error) {
+      alert('Error sharing workout: ' + error.message);
+    } finally {
+      setPostLoading(false);
+    }
+  };
+
   useEffect(() => {
     console.log('Current User from AuthContext:', user);
   }, [user]);
@@ -165,259 +237,369 @@ export default function WorkoutScreen() {
     <View style={styles.container}>
       {!isWorkoutStarted ? (
         <View style={styles.startWorkoutContainer}>
-          <TouchableOpacity style={styles.bigAddButton} onPress={startWorkout}>
-            <Text style={styles.bigAddButtonText}>+</Text>
+          <TouchableOpacity 
+            style={styles.bigAddButton}
+            onPress={startWorkout}
+          >
+            <MaterialCommunityIcons name="dumbbell" size={48} color="white" />
           </TouchableOpacity>
-          <Text style={styles.startWorkoutText}>Press to Start Workout</Text>
+          <Text style={styles.startWorkoutText}>Start Workout</Text>
         </View>
       ) : (
         <View style={styles.innerContainer}>
-          <Text style={styles.header}>Workout Timer: {timer}s</Text>
+          <Card style={styles.timerCard}>
+            <Card.Content>
+              <Text style={styles.timerText}>{Math.floor(timer/60)}:{(timer%60).toString().padStart(2,'0')}</Text>
+            </Card.Content>
+          </Card>
 
           {!isWorkoutEnded ? (
             <>
-              <TouchableOpacity style={styles.addButton} onPress={() => setModalVisible(true)}>
+              <TouchableOpacity 
+                style={styles.addButton}
+                onPress={() => setModalVisible(true)}
+              >
+                <MaterialCommunityIcons name="plus" size={24} color="white" />
                 <Text style={styles.addButtonText}>Add Exercise</Text>
               </TouchableOpacity>
 
               <FlatList
                 data={workouts}
-                keyExtractor={(item, index) => index.toString()}
-                contentContainerStyle={{ flexGrow: 1, paddingBottom: 50 }}
-                renderItem={({ item, index }) => (
-                  <View style={styles.workoutItem}>
-                    <Text style={styles.workoutText}>
-                      {item.name} - {item.weight} lbs | {item.reps} reps | {item.sets} sets
-                    </Text>
-                    <View style={styles.buttonRow}>
-                      <Button onPress={() => deleteWorkoutItem(index)} color="red">
-                        Delete
-                      </Button>
-                    </View>
-                  </View>
+                keyExtractor={item => item.id}
+                renderItem={({item, index}) => (
+                  <Card style={styles.exerciseCard}>
+                    <Card.Content style={styles.exerciseContent}>
+                      <View>
+                        <Text style={styles.exerciseName}>{item.name}</Text>
+                        <Text style={styles.exerciseDetails}>
+                          {item.sets} sets × {item.reps} reps @ {item.weight} lbs
+                        </Text>
+                      </View>
+                      <IconButton
+                        icon="delete"
+                        size={20}
+                        onPress={() => deleteWorkout(index)}
+                      />
+                    </Card.Content>
+                  </Card>
                 )}
               />
 
               <Button
                 mode="contained"
-                onPress={stopWorkout}
-                style={styles.endWorkoutButton}
-                color="red"
+                onPress={endWorkout}
+                style={styles.endButton}
+                labelStyle={styles.buttonLabel}
               >
                 End Workout
               </Button>
             </>
           ) : (
-            <View style={styles.savePostContainer}>
-              <Button
-                mode="contained"
-                onPress={saveWorkout}
-                style={styles.saveButton}
+            <View style={styles.endWorkoutContainer}>
+              <Card style={styles.summaryCard}>
+                <Card.Content>
+                  <Text style={styles.summaryTitle}>Workout Summary</Text>
+                  <Text style={styles.summaryText}>
+                    Duration: {Math.floor(timer/60)}:{(timer%60).toString().padStart(2,'0')}
+                  </Text>
+                  <Text style={styles.summaryText}>
+                    Exercises: {workouts.length}
+                  </Text>
+                </Card.Content>
+              </Card>
+
+              <View style={styles.actionButtons}>
+                <Button
+                  mode="contained"
+                  onPress={saveToProfile}
+                  loading={saveLoading}
+                  style={[styles.actionButton, styles.saveButton]}
+                  labelStyle={styles.buttonLabel}
+                >
+                  Save to Profile
+                </Button>
+                
+                <Button
+                  mode="contained"
+                  onPress={postWorkout}
+                  loading={postLoading}
+                  style={[styles.actionButton, styles.postButton]}
+                  labelStyle={styles.buttonLabel}
+                >
+                  Share Workout
+                </Button>
+              </View>
+
+              <Animated.View 
+                style={[
+                  styles.successMessage,
+                  {opacity: fadeAnim}
+                ]}
               >
-                Save Workout to Profile
-              </Button>
+                <Text style={styles.successText}>
+                  Workout saved successfully!
+                </Text>
+              </Animated.View>
             </View>
           )}
         </View>
       )}
 
-      <Modal visible={modalVisible} animationType="slide" transparent={true}>
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={() => setModalVisible(false)}
+      >
         <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Search for an Exercise</Text>
+          <Card style={styles.modalCard}>
+            <Card.Title title="Add Exercise" />
+            <Card.Content>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search exercises..."
+                value={searchQuery}
+                onChangeText={handleSearch}
+              />
+              
+              {loadingExercises ? (
+                <ActivityIndicator size="large" color="#007AFF" />
+              ) : (
+                <FlatList
+                  data={filteredExercises}
+                  keyExtractor={item => item.name}
+                  renderItem={({item}) => (
+                    <TouchableOpacity
+                      style={[
+                        styles.exerciseItem,
+                        selectedExercise === item && styles.selectedExercise
+                      ]}
+                      onPress={() => selectExercise(item)}
+                    >
+                      <Text style={styles.exerciseItemText}>{item.name}</Text>
+                    </TouchableOpacity>
+                  )}
+                  style={styles.exerciseList}
+                />
+              )}
 
-            <TextInput
-              placeholder="Search exercises..."
-              style={styles.searchInput}
-              value={searchQuery}
-              onChangeText={handleSearch}
-            />
-            {loadingExercises ? (
-              <ActivityIndicator size="large" color="#007AFF" />
-            ) : (
-              <ScrollView style={styles.exerciseList}>
-                {filteredExercises.map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={styles.exerciseOption}
-                    onPress={() => setSelectedExercise(item.name)}
-                  >
-                    <Text style={styles.exerciseText}>{item.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
+              <View style={styles.exerciseInputs}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Weight (lbs)"
+                  keyboardType="numeric"
+                  value={weight}
+                  onChangeText={setWeight}
+                />
+                <TextInput 
+                  style={styles.input}
+                  placeholder="Reps"
+                  keyboardType="numeric"
+                  value={reps}
+                  onChangeText={setReps}
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Sets"
+                  keyboardType="numeric"
+                  value={sets}
+                  onChangeText={setSets}
+                />
+              </View>
 
-            <TextInput
-              placeholder="Weight (lbs)"
-              keyboardType="numeric"
-              style={styles.input}
-              value={weight}
-              onChangeText={setWeight}
-            />
-            <TextInput
-              placeholder="Reps"
-              keyboardType="numeric"
-              style={styles.input}
-              value={reps}
-              onChangeText={setReps}
-            />
-            <TextInput
-              placeholder="Sets"
-              keyboardType="numeric"
-              style={styles.input}
-              value={sets}
-              onChangeText={setSets}
-            />
-
-            <Button
-              mode="contained"
-              onPress={addExerciseToWorkout}
-              style={styles.saveButton}
-            >
-              Save
-            </Button>
-            <Button onPress={() => setModalVisible(false)}>Cancel</Button>
-          </View>
+              <View style={styles.modalActions}>
+                <Button
+                  mode="contained"
+                  onPress={addWorkout}
+                  style={styles.modalButton}
+                >
+                  Add Exercise
+                </Button>
+                <Button
+                  mode="outlined"
+                  onPress={() => setModalVisible(false)}
+                  style={styles.modalButton}
+                >
+                  Cancel
+                </Button>
+              </View>
+            </Card.Content>
+          </Card>
         </View>
       </Modal>
     </View>
   );
 }
 
-// ~380 lines total
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f4f4f4',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20
-  },
-  innerContainer: {
-    flex: 1,
-    width: '100%',
-    alignItems: 'center'
+    backgroundColor: '#f5f5f5',
+    padding: 16,
   },
   startWorkoutContainer: {
+    flex: 1,
     justifyContent: 'center',
-    alignItems: 'center'
+    alignItems: 'center',
   },
   bigAddButton: {
-    backgroundColor: '#007AFF',
     width: 120,
     height: 120,
     borderRadius: 60,
+    backgroundColor: '#007AFF',
     justifyContent: 'center',
-    alignItems: 'center'
-  },
-  bigAddButtonText: {
-    color: 'white',
-    fontSize: 50,
-    fontWeight: 'bold'
+    alignItems: 'center',
+    marginBottom: 16,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
   },
   startWorkoutText: {
-    fontSize: 18,
-    color: '#555',
-    marginTop: 10
+    fontSize: 20,
+    color: '#666',
+    fontWeight: '500',
   },
-  header: {
-    fontSize: 24,
+  timerCard: {
+    marginBottom: 16,
+    elevation: 2,
+  },
+  timerText: {
+    fontSize: 48,
+    textAlign: 'center',
     fontWeight: 'bold',
-    marginBottom: 10,
-    textAlign: 'center'
+    color: '#007AFF',
   },
   addButton: {
-    backgroundColor: '#007AFF',
-    padding: 15,
-    borderRadius: 10,
-    marginTop: 10,
+    flexDirection: 'row',
+    backgroundColor: '#4CAF50',
+    padding: 12,
+    borderRadius: 8,
     alignItems: 'center',
-    width: '90%'
+    justifyContent: 'center',
+    marginBottom: 16,
+    elevation: 2,
   },
   addButtonText: {
     color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold'
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 8,
   },
-  workoutItem: {
-    padding: 15,
-    backgroundColor: '#fff',
-    marginVertical: 5,
-    borderRadius: 10,
-    width: '100%'
+  exerciseCard: {
+    marginBottom: 8,
+    elevation: 1,
   },
-  workoutText: {
-    fontSize: 16
-  },
-  buttonRow: {
+  exerciseContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 5
+    alignItems: 'center',
   },
-  endWorkoutButton: {
-    marginTop: 20,
-    backgroundColor: 'red',
-    width: '90%'
+  exerciseName: {
+    fontSize: 16,
+    fontWeight: '500',
   },
-  savePostContainer: {
+  exerciseDetails: {
+    color: '#666',
+    marginTop: 4,
+  },
+  summaryCard: {
+    marginBottom: 16,
+  },
+  summaryTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  summaryText: {
+    fontSize: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  actionButtons: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    width: '100%',
-    marginTop: 20
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  actionButton: {
+    flex: 1,
+    marginHorizontal: 8,
   },
   saveButton: {
-    backgroundColor: '#28A745',
-    width: '90%'
+    backgroundColor: '#4CAF50',
+  },
+  postButton: {
+    backgroundColor: '#2196F3',
+  },
+  buttonLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
   },
   modalContainer: {
     flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)'
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 16,
   },
-  modalContent: {
-    width: '90%',
-    backgroundColor: 'white',
-    padding: 20,
-    borderRadius: 10,
-    alignItems: 'center'
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 10
+  modalCard: {
+    elevation: 5,
   },
   searchInput: {
-    width: '100%',
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 5,
-    marginBottom: 10
+    backgroundColor: '#f5f5f5',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
   },
   exerciseList: {
     maxHeight: 200,
-    width: '100%',
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 5,
-    marginBottom: 10
   },
-  exerciseOption: {
-    padding: 10,
+  exerciseItem: {
+    padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#ddd'
+    borderBottomColor: '#eee',
   },
-  exerciseText: {
-    fontSize: 16
+  selectedExercise: {
+    backgroundColor: '#e3f2fd',
+  },
+  exerciseItemText: {
+    fontSize: 16,
+  },
+  exerciseInputs: {
+    marginVertical: 16,
   },
   input: {
-    width: '100%',
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 5,
-    marginBottom: 10
+    backgroundColor: '#f5f5f5',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  modalButton: {
+    flex: 1,
+    marginHorizontal: 8,
+  },
+  successMessage: {
+    position: 'absolute',
+    bottom: 20,
+    left: 0,
+    right: 0,
+    backgroundColor: '#4CAF50',
+    padding: 16,
+    borderRadius: 8,
+    margin: 16,
+  },
+  successText: {
+    color: 'white',
+    textAlign: 'center',
+    fontSize: 16,
+    fontWeight: 'bold',
   }
 });
