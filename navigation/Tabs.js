@@ -20,8 +20,8 @@ export default function Tabs() {
             iconName = focused ? 'fitness' : 'fitness-outline';
           } else if (route.name === 'Profile') {
             iconName = focused ? 'person' : 'person-outline';
-          } else if (route.name === 'community') {
-            iconName = focused ? 'community' : 'community-outline';
+          } else if (route.name === 'Community') {
+            iconName = focused ? 'chatbox' : 'chatbox-outline';
           }
           return <Ionicons name={iconName} size={size} color={color} />;
         },
