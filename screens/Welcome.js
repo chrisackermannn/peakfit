@@ -1,7 +1,13 @@
 import React from 'react';
 import { View, Text, Button, StyleSheet, ImageBackground } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const Welcome = ({ navigation }) => {
+    const handleGetStarted = async () => {
+        await AsyncStorage.setItem('hasLaunched', 'true');
+        navigation.navigate('Login'); // or 'Tabs' if you want to skip the login screen
+    };
+
     return (
         <ImageBackground 
             source={{ uri: 'https://example.com/your-gif.gif' }} 
@@ -11,7 +17,7 @@ const Welcome = ({ navigation }) => {
                 <Text style={styles.title}>Welcome to PeakFit</Text>
                 <Button 
                     title="Get Started" 
-                    onPress={() => navigation.navigate('NextScreen')} 
+                    onPress={handleGetStarted} 
                 />
             </View>
         </ImageBackground>
