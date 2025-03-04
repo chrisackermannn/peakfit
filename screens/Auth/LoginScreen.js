@@ -40,14 +40,15 @@ const redirectUri = makeRedirectUri({
 const googleConfig = {
   iosClientId: '1074755682998-95lcclulfbq36di4do14imf2uvcrkaof.apps.googleusercontent.com',
   androidClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com',
+  webClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com', // Add this
   expoClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com'
 };
 
 export default function LoginScreen({ navigation }) {
   const [request, response, promptAsync] = Google.useAuthRequest({
+    clientId: Platform.OS === 'web' ? googleConfig.webClientId : googleConfig.expoClientId, // Use webClientId for web
+    iosClientId: googleConfig.iosClientId,
     androidClientId: googleConfig.androidClientId,
-    iosClientId: googleConfig.iosClientId, 
-    expoClientId: googleConfig.expoClientId,
     responseType: ResponseType.IdToken,
     redirectUri,
     scopes: ['profile', 'email'],
