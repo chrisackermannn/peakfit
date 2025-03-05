@@ -9,7 +9,7 @@ import { auth, db } from '../Firebase/firebaseConfig'; // Import your Firebase a
 import { onAuthStateChanged, updateProfile } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -70,8 +70,14 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const value = {
+    user,
+    loading,
+    updateUserProfile
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, updateUserProfile }}>
+    <AuthContext.Provider value={value}>
       {!loading && children}
     </AuthContext.Provider>
   );
