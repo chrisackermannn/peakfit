@@ -9,14 +9,74 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
-  Animated
+  Animated,
+  Platform,
+  SafeAreaView
 } from 'react-native';
-import { Button, Card, IconButton } from 'react-native-paper';
+import { Button, Card, IconButton, Surface } from 'react-native-paper';
 import { exercisesAPI, getExercises } from '../data/exerciseAPI';
 import { saveWorkoutToProfile, saveWorkoutGlobally } from '../data/firebaseHelpers';
 import { useAuth } from '../context/AuthContext';
 import { serverTimestamp } from 'firebase/firestore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+
+const CompletionModal = ({ visible, onDismiss, onSave, onPost, timer, workouts, saveLoading, postLoading }) => (
+  <Modal
+    visible={visible}
+    transparent={true}
+    animationType="slide"
+    onRequestClose={onDismiss}
+  >
+    <View style={styles.completionModalContainer}>
+      <Surface style={styles.completionModalContent}>
+        <Text style={styles.completionTitle}>Workout Complete! 🎉</Text>
+        
+        <View style={styles.workoutSummary}>
+          <View style={styles.summaryItem}>
+            <MaterialCommunityIcons name="clock-outline" size={24} color="#007AFF" />
+            <Text style={styles.summaryValue}>
+              {Math.floor(timer/60)}:{(timer%60).toString().padStart(2,'0')}
+            </Text>
+            <Text style={styles.summaryLabel}>Duration</Text>
+          </View>
+          <View style={styles.summaryItem}>
+            <MaterialCommunityIcons name="dumbbell" size={24} color="#007AFF" />
+            <Text style={styles.summaryValue}>{workouts.length}</Text>
+            <Text style={styles.summaryLabel}>Exercises</Text>
+          </View>
+        </View>
+
+        <View style={styles.completionActions}>
+          <Button
+            mode="contained"
+            onPress={onSave}
+            style={[styles.completionButton, styles.saveButton]}
+            loading={saveLoading}
+          >
+            Save to Profile
+          </Button>
+          <Button
+            mode="contained"
+            onPress={onPost}
+            style={[styles.completionButton, styles.postButton]}
+            loading={postLoading}
+          >
+            Share Workout
+          </Button>
+          <Button
+            mode="outlined"
+            onPress={onDismiss}
+            style={styles.dismissButton}
+            color="#007AFF"
+            labelStyle={{ color: '#007AFF' }}
+          >
+            Dismiss
+          </Button>
+        </View>
+      </Surface>
+    </View>
+  </Modal>
+);
 
 export default function WorkoutScreen() {
   const { user } = useAuth();
@@ -39,6 +99,7 @@ export default function WorkoutScreen() {
   const [postLoading, setPostLoading] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const timerRef = useRef(null);
+  const [editingExercise, setEditingExercise] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -95,20 +156,42 @@ export default function WorkoutScreen() {
     setSelectedExercise(exercise);
   };
 
+  const handleEditExercise = (exercise) => {
+    setEditingExercise(exercise);
+    setSelectedExercise({ name: exercise.name });
+    setWeight(exercise.weight.toString());
+    setReps(exercise.reps.toString());
+    setSets(exercise.sets.toString());
+    setModalVisible(true);
+  };
+
   const addWorkout = () => {
     if (!selectedExercise || !weight || !reps || !sets) {
       alert('Please fill in all exercise details.');
       return;
     }
-    const newWorkout = {
-      id: Date.now().toString(),
+
+    const exerciseData = {
+      id: editingExercise?.id || Date.now().toString(),
       name: selectedExercise.name,
       weight: parseFloat(weight),
       reps: parseInt(reps),
       sets: parseInt(sets),
     };
-    setWorkouts([...workouts, newWorkout]);
+
+    if (editingExercise) {
+      // Update existing exercise
+      const updatedWorkouts = workouts.map(w => 
+        w.id === editingExercise.id ? exerciseData : w
+      );
+      setWorkouts(updatedWorkouts);
+    } else {
+      // Add new exercise
+      setWorkouts([...workouts, exerciseData]);
+    }
+
     setModalVisible(false);
+    setEditingExercise(null);
     setSelectedExercise('');
     setWeight('');
     setReps('');
@@ -234,113 +317,105 @@ export default function WorkoutScreen() {
   }, [user]);
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <IconButton
+          icon="arrow-left"
+          size={24}
+          onPress={() => navigation.goBack()}
+        />
+        <Button
+          mode="contained"
+          onPress={() => {/* Add rest timer logic */}}
+          style={styles.restTimerButton}
+        >
+          Rest Timer
+        </Button>
+      </View>
+
       {!isWorkoutStarted ? (
         <View style={styles.startWorkoutContainer}>
-          <TouchableOpacity 
-            style={styles.bigAddButton}
-            onPress={startWorkout}
-          >
-            <MaterialCommunityIcons name="dumbbell" size={48} color="white" />
-          </TouchableOpacity>
-          <Text style={styles.startWorkoutText}>Start Workout</Text>
+          <Surface style={styles.workoutInfoCard}>
+            <Text style={styles.workoutTitle}>Start New Workout</Text>
+            <TouchableOpacity onPress={startWorkout} style={styles.startButton}>
+              <MaterialCommunityIcons name="dumbbell" size={32} color="#fff" />
+              <Text style={styles.startButtonText}>Begin Workout</Text>
+            </TouchableOpacity>
+          </Surface>
         </View>
       ) : (
-        <View style={styles.innerContainer}>
-          <Card style={styles.timerCard}>
-            <Card.Content>
-              <Text style={styles.timerText}>{Math.floor(timer/60)}:{(timer%60).toString().padStart(2,'0')}</Text>
-            </Card.Content>
-          </Card>
-
-          {!isWorkoutEnded ? (
-            <>
-              <TouchableOpacity 
-                style={styles.addButton}
-                onPress={() => setModalVisible(true)}
-              >
-                <MaterialCommunityIcons name="plus" size={24} color="white" />
-                <Text style={styles.addButtonText}>Add Exercise</Text>
-              </TouchableOpacity>
-
-              <FlatList
-                data={workouts}
-                keyExtractor={item => item.id}
-                renderItem={({item, index}) => (
-                  <Card style={styles.exerciseCard}>
-                    <Card.Content style={styles.exerciseContent}>
-                      <View>
-                        <Text style={styles.exerciseName}>{item.name}</Text>
-                        <Text style={styles.exerciseDetails}>
-                          {item.sets} sets × {item.reps} reps @ {item.weight} lbs
-                        </Text>
-                      </View>
-                      <IconButton
-                        icon="delete"
-                        size={20}
-                        onPress={() => deleteWorkout(index)}
-                      />
-                    </Card.Content>
-                  </Card>
-                )}
-              />
-
-              <Button
-                mode="contained"
-                onPress={endWorkout}
-                style={styles.endButton}
-                labelStyle={styles.buttonLabel}
-              >
-                End Workout
-              </Button>
-            </>
-          ) : (
-            <View style={styles.endWorkoutContainer}>
-              <Card style={styles.summaryCard}>
-                <Card.Content>
-                  <Text style={styles.summaryTitle}>Workout Summary</Text>
-                  <Text style={styles.summaryText}>
-                    Duration: {Math.floor(timer/60)}:{(timer%60).toString().padStart(2,'0')}
-                  </Text>
-                  <Text style={styles.summaryText}>
-                    Exercises: {workouts.length}
-                  </Text>
-                </Card.Content>
-              </Card>
-
-              <View style={styles.actionButtons}>
-                <Button
-                  mode="contained"
-                  onPress={saveToProfile}
-                  loading={saveLoading}
-                  style={[styles.actionButton, styles.saveButton]}
-                  labelStyle={styles.buttonLabel}
-                >
-                  Save to Profile
-                </Button>
-                
-                <Button
-                  mode="contained"
-                  onPress={postWorkout}
-                  loading={postLoading}
-                  style={[styles.actionButton, styles.postButton]}
-                  labelStyle={styles.buttonLabel}
-                >
-                  Share Workout
-                </Button>
-              </View>
-
-              <Animated.View 
-                style={[
-                  styles.successMessage,
-                  {opacity: fadeAnim}
-                ]}
-              >
-                <Text style={styles.successText}>
-                  Workout saved successfully!
+        <View style={styles.workoutContainer}>
+          <Surface style={styles.workoutInfoCard}>
+            <Text style={styles.workoutTitle}>Current Workout</Text>
+            <View style={styles.workoutMetaContainer}>
+              <View style={styles.metaItem}>
+                <MaterialCommunityIcons name="timer-outline" size={24} color="#007AFF" />
+                <Text style={styles.metaValue}>
+                  {Math.floor(timer/60)}:{(timer%60).toString().padStart(2,'0')}
                 </Text>
-              </Animated.View>
+                <Text style={styles.metaLabel}>Duration</Text>
+              </View>
+              <View style={styles.metaItem}>
+                <MaterialCommunityIcons name="dumbbell" size={24} color="#007AFF" />
+                <Text style={styles.metaValue}>{workouts.length}</Text>
+                <Text style={styles.metaLabel}>Exercises</Text>
+              </View>
             </View>
+          </Surface>
+
+          <FlatList
+            data={workouts}
+            keyExtractor={item => item.id}
+            style={styles.exerciseList}
+            renderItem={({item}) => (
+              <Surface style={styles.exerciseCard}>
+                <View style={styles.exerciseContent}>
+                  <View style={styles.exerciseIconContainer}>
+                    <View style={[styles.shape, styles.triangle]} />
+                    <View style={[styles.shape, styles.square]} />
+                    <View style={[styles.shape, styles.circle]} />
+                  </View>
+                  <View style={styles.exerciseDetails}>
+                    <Text style={styles.exerciseName}>{item.name}</Text>
+                    <Text style={styles.exerciseStats}>
+                      {item.sets}×{item.reps} | {item.weight} lbs
+                    </Text>
+                  </View>
+                  <View style={styles.exerciseActions}>
+                    <IconButton
+                      icon="pencil-outline"
+                      size={24}
+                      color="#007AFF"
+                      onPress={() => handleEditExercise(item)}
+                    />
+                    <IconButton
+                      icon="delete-outline"
+                      size={24}
+                      color="#FF3B30"
+                      onPress={() => deleteWorkout(index)}
+                    />
+                  </View>
+                </View>
+              </Surface>
+            )}
+          />
+
+          <TouchableOpacity
+            style={styles.addButton}
+            onPress={() => setModalVisible(true)}
+          >
+            <MaterialCommunityIcons name="plus" size={24} color="#fff" />
+            <Text style={styles.addButtonText}>Add Exercise</Text>
+          </TouchableOpacity>
+
+          {!isWorkoutEnded && (
+            <Button
+              mode="contained"
+              onPress={endWorkout}
+              style={styles.endButton}
+            >
+              End Workout
+            </Button>
           )}
         </View>
       )}
@@ -352,254 +427,371 @@ export default function WorkoutScreen() {
         onRequestClose={() => setModalVisible(false)}
       >
         <View style={styles.modalContainer}>
-          <Card style={styles.modalCard}>
-            <Card.Title title="Add Exercise" />
-            <Card.Content>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search exercises..."
-                value={searchQuery}
-                onChangeText={handleSearch}
+          <Surface style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Add Exercise</Text>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search exercises..."
+              value={searchQuery}
+              onChangeText={handleSearch}
+              placeholderTextColor="#666"
+            />
+            
+            {loadingExercises ? (
+              <ActivityIndicator size="large" color="#007AFF" />
+            ) : (
+              <FlatList
+                data={filteredExercises}
+                keyExtractor={item => item.name}
+                renderItem={({item}) => (
+                  <TouchableOpacity
+                    style={[
+                      styles.exerciseItem,
+                      selectedExercise === item && styles.selectedExercise
+                    ]}
+                    onPress={() => selectExercise(item)}
+                  >
+                    <Text style={styles.exerciseItemText}>{item.name}</Text>
+                  </TouchableOpacity>
+                )}
+                style={styles.exerciseList}
               />
-              
-              {loadingExercises ? (
-                <ActivityIndicator size="large" color="#007AFF" />
-              ) : (
-                <FlatList
-                  data={filteredExercises}
-                  keyExtractor={item => item.name}
-                  renderItem={({item}) => (
-                    <TouchableOpacity
-                      style={[
-                        styles.exerciseItem,
-                        selectedExercise === item && styles.selectedExercise
-                      ]}
-                      onPress={() => selectExercise(item)}
-                    >
-                      <Text style={styles.exerciseItemText}>{item.name}</Text>
-                    </TouchableOpacity>
-                  )}
-                  style={styles.exerciseList}
-                />
-              )}
+            )}
 
-              <View style={styles.exerciseInputs}>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Weight (lbs)"
-                  keyboardType="numeric"
-                  value={weight}
-                  onChangeText={setWeight}
-                />
-                <TextInput 
-                  style={styles.input}
-                  placeholder="Reps"
-                  keyboardType="numeric"
-                  value={reps}
-                  onChangeText={setReps}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Sets"
-                  keyboardType="numeric"
-                  value={sets}
-                  onChangeText={setSets}
-                />
-              </View>
+            <View style={styles.exerciseInputs}>
+              <TextInput
+                style={styles.input}
+                placeholder="Weight (lbs)"
+                keyboardType="numeric"
+                value={weight}
+                onChangeText={setWeight}
+                placeholderTextColor="#666"
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Reps"
+                keyboardType="numeric"
+                value={reps}
+                onChangeText={setReps}
+                placeholderTextColor="#666"
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Sets"
+                keyboardType="numeric"
+                value={sets}
+                onChangeText={setSets}
+                placeholderTextColor="#666"
+              />
+            </View>
 
-              <View style={styles.modalActions}>
-                <Button
-                  mode="contained"
-                  onPress={addWorkout}
-                  style={styles.modalButton}
-                >
-                  Add Exercise
-                </Button>
-                <Button
-                  mode="outlined"
-                  onPress={() => setModalVisible(false)}
-                  style={styles.modalButton}
-                >
-                  Cancel
-                </Button>
-              </View>
-            </Card.Content>
-          </Card>
+            <View style={styles.modalActions}>
+              <Button
+                mode="contained"
+                onPress={addWorkout}
+                style={styles.modalButton}
+                contentStyle={styles.modalButtonContent}
+              >
+                Add Exercise
+              </Button>
+              <Button
+                mode="outlined"
+                onPress={() => setModalVisible(false)}
+                style={styles.modalCancelButton}
+                color="#007AFF"
+                labelStyle={{ color: '#007AFF' }}
+              >
+                Cancel
+              </Button>
+            </View>
+          </Surface>
         </View>
       </Modal>
-    </View>
+
+      <CompletionModal
+        visible={isWorkoutEnded}
+        onDismiss={() => setIsWorkoutEnded(false)}
+        onSave={saveToProfile}
+        onPost={postWorkout}
+        timer={timer}
+        workouts={workouts}
+        saveLoading={saveLoading}
+        postLoading={postLoading}
+      />
+    </SafeAreaView>
   );
 }
 
+// styles section of WorkoutScreen.js
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
-    padding: 16,
   },
-  startWorkoutContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  bigAddButton: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#007AFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-  },
-  startWorkoutText: {
-    fontSize: 20,
-    color: '#666',
-    fontWeight: '500',
-  },
-  timerCard: {
-    marginBottom: 16,
-    elevation: 2,
-  },
-  timerText: {
-    fontSize: 48,
-    textAlign: 'center',
-    fontWeight: 'bold',
-    color: '#007AFF',
-  },
-  addButton: {
-    flexDirection: 'row',
-    backgroundColor: '#4CAF50',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-    elevation: 2,
-  },
-  addButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 8,
-  },
-  exerciseCard: {
-    marginBottom: 8,
-    elevation: 1,
-  },
-  exerciseContent: {
+  header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
   },
-  exerciseName: {
-    fontSize: 16,
-    fontWeight: '500',
+  restTimerButton: {
+    backgroundColor: '#e3f2fd', // Changed from #d3d3d3
+    borderRadius: 12,
+    paddingHorizontal: 20,
   },
-  exerciseDetails: {
+  workoutContainer: {
+    flex: 1,
+    padding: 16,
+  },
+  workoutInfoCard: {
+    backgroundColor: '#e3f2fd', // Changed from #d3d3d3
+    borderRadius: 16,
+    padding: 24,
+    marginBottom: 20,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      }
+    })
+  },
+  workoutTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 20,
+  },
+  workoutMetaContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  metaItem: {
+    alignItems: 'center',
+  },
+  metaIcon: {
+    opacity: 0.6,
+    marginBottom: 8,
+  },
+  metaValue: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#333',
+  },
+  metaLabel: {
+    fontSize: 14,
     color: '#666',
     marginTop: 4,
   },
-  summaryCard: {
-    marginBottom: 16,
+  exerciseCard: {
+    backgroundColor: '#e3f2fd', // Changed from #d3d3d3
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      }
+    })
   },
-  summaryTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 16,
-    textAlign: 'center',
+  exerciseIconContainer: {
+    width: 50,
+    height: 50,
+    marginRight: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  summaryText: {
-    fontSize: 16,
-    marginBottom: 8,
-    textAlign: 'center',
+  exerciseIcon: {
+    flexDirection: 'column',
+    alignItems: 'center',
   },
-  actionButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+  shape: {
+    width: 16,
+    height: 16,
+    margin: 2,
   },
-  actionButton: {
+  triangle: {
+    width: 0,
+    height: 0,
+    backgroundColor: 'transparent',
+    borderStyle: 'solid',
+    borderLeftWidth: 8,
+    borderRightWidth: 8,
+    borderBottomWidth: 16,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: '#808080',
+  },
+  square: {
+    backgroundColor: '#808080',
+  },
+  circle: {
+    backgroundColor: '#808080',
+    borderRadius: 8,
+  },
+  exerciseDetails: {
     flex: 1,
-    marginHorizontal: 8,
   },
-  saveButton: {
-    backgroundColor: '#4CAF50',
+  exerciseName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
   },
-  postButton: {
-    backgroundColor: '#2196F3',
+  exerciseStats: {
+    fontSize: 15,
+    color: '#666',
   },
-  buttonLabel: {
+  addButton: {
+    backgroundColor: '#007AFF', // Changed from #6b5b95
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    borderRadius: 12,
+    marginVertical: 16,
+  },
+  addButtonText: {
+    color: '#fff',
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  endButton: {
+    backgroundColor: '#007AFF', // Changed from #6b5b95
+    borderRadius: 12,
+    marginTop: 'auto',
+    marginBottom: Platform.OS === 'ios' ? 16 : 0,
   },
   modalContainer: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.5)',
-    padding: 16,
   },
-  modalCard: {
-    elevation: 5,
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    maxHeight: '80%',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 16,
   },
   searchInput: {
     backgroundColor: '#f5f5f5',
-    padding: 12,
-    borderRadius: 8,
+    padding: 16,
+    borderRadius: 12,
+    fontSize: 16,
     marginBottom: 16,
   },
   exerciseList: {
     maxHeight: 200,
+    marginBottom: 16,
   },
   exerciseItem: {
-    padding: 12,
+    padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
   },
   selectedExercise: {
-    backgroundColor: '#e3f2fd',
-  },
-  exerciseItemText: {
-    fontSize: 16,
+    backgroundColor: '#f0f0f0',
   },
   exerciseInputs: {
-    marginVertical: 16,
+    gap: 12,
   },
   input: {
     backgroundColor: '#f5f5f5',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
+    padding: 16,
+    borderRadius: 12,
+    fontSize: 16,
   },
   modalActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    marginTop: 24,
+    gap: 12,
   },
   modalButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+  },
+  modalCancelButton: {
+    borderColor: '#007AFF',
+    borderRadius: 12,
+  },
+  dismissButton: {
+    borderColor: '#007AFF',
+  },
+  completionModalContainer: {
     flex: 1,
-    marginHorizontal: 8,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 20,
   },
-  successMessage: {
-    position: 'absolute',
-    bottom: 20,
-    left: 0,
-    right: 0,
-    backgroundColor: '#4CAF50',
-    padding: 16,
-    borderRadius: 8,
-    margin: 16,
+  completionModalContent: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 24,
   },
-  successText: {
-    color: 'white',
+  completionTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#333',
     textAlign: 'center',
-    fontSize: 16,
-    fontWeight: 'bold',
+    marginBottom: 24,
+  },
+  workoutSummary: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 24,
+  },
+  summaryItem: {
+    alignItems: 'center',
+  },
+  summaryValue: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#333',
+    marginTop: 8,
+  },
+  summaryLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
+  completionActions: {
+    gap: 12,
+  },
+  completionButton: {
+    borderRadius: 12,
+    backgroundColor: '#007AFF',
+  },
+  saveButton: {
+    backgroundColor: '#34C759',
+  },
+  postButton: {
+    backgroundColor: '#007AFF',
+  },
+  dismissButton: {
+    borderColor: '#007AFF', // Changed from #6b5b95
+  },
+  exerciseActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
   }
 });

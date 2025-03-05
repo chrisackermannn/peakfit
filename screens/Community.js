@@ -9,23 +9,37 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  ScrollView,
+  SafeAreaView,
+  Platform,
+  Image
 } from 'react-native';
-import { Card, Button, IconButton, Avatar, Divider } from 'react-native-paper';
+import { Card, Button, IconButton, Avatar, Divider, Surface } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
 import { getGlobalWorkouts, toggleLike, addComment } from '../data/firebaseHelpers';
 import { format } from 'date-fns';
 import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
+import { useNavigation } from '@react-navigation/native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 
-export default function communityScreen() {
+const CommunityScreen = () => {
+  const navigation = useNavigation();
   const { user } = useAuth();
   const [workouts, setWorkouts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [comment, setComment] = useState('');
   const [selectedWorkout, setSelectedWorkout] = useState(null);
+  
+  const categories = [
+    { id: 1, title: 'Workouts', icon: 'dumbbell', navigate: true },
+    { id: 2, title: 'Monthly Challenges', icon: 'trophy-outline', navigate: false },
+    { id: 3, title: 'Diets', icon: 'food-apple', navigate: false },
+    { id: 4, title: 'Trending', icon: 'trending-up', navigate: false }
+  ];
 
   // Add formatDuration helper function
   const formatDuration = (seconds) => {
@@ -198,28 +212,51 @@ export default function communityScreen() {
           </View>
         </View>
 
-        <View style={styles.actions}>
-          <Button 
-            icon="heart" 
-            mode={item.likes?.includes(user?.uid) ? "contained" : "outlined"}
-            onPress={() => handleLike(item.id)}
-            style={styles.actionButton}
-          >
-            {item.likes?.length || 0}
-          </Button>
-          <Button 
-            icon="comment" 
-            mode={selectedWorkout?.id === item.id ? "contained" : "outlined"}
-            onPress={() => setSelectedWorkout(selectedWorkout?.id === item.id ? null : item)}
-            style={styles.actionButton}
-          >
-            {item.comments?.length || 0}
-          </Button>
-        </View>
+        {renderActionButtons({ item })}
 
         {selectedWorkout?.id === item.id && renderComments(item)}
       </Card.Content>
     </Card>
+  );
+
+  const renderActionButtons = ({ item }) => (
+    <View style={styles.actions}>
+      <Button 
+        icon={({size}) => (
+          <MaterialCommunityIcons 
+            name="heart"
+            size={24}
+            color={item.likes?.includes(user?.uid) ? '#FF3B30' : '#666'}
+          />
+        )}
+        mode="outlined"
+        onPress={() => handleLike(item.id)}
+        style={styles.actionButton}
+        labelStyle={{
+          color: '#666'
+        }}
+      >
+        {item.likes?.length || 0}
+      </Button>
+
+      <Button 
+        icon={({size}) => (
+          <MaterialCommunityIcons 
+            name="comment"
+            size={24}
+            color={selectedWorkout?.id === item.id ? '#007AFF' : '#666'}
+          />
+        )}
+        mode="outlined"
+        onPress={() => setSelectedWorkout(selectedWorkout?.id === item.id ? null : item)}
+        style={styles.actionButton}
+        labelStyle={{
+          color: '#666'
+        }}
+      >
+        {item.comments?.length || 0}
+      </Button>
+    </View>
   );
 
   if (loading) {
@@ -231,32 +268,205 @@ export default function communityScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <FlatList
-        data={workouts}
-        renderItem={renderWorkout}
-        keyExtractor={item => item.id}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        contentContainerStyle={styles.listContent}
-      />
-    </View>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.pageTitle}>Community</Text>
+        <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
+          <Image 
+            source={user?.photoURL ? { uri: user.photoURL } : defaultAvatar}
+            style={styles.profileImage}
+          />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView 
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.categoriesWrapper}>
+          {categories.map(category => (
+            <TouchableOpacity 
+              key={category.id} 
+              style={styles.categoryBox}
+              onPress={() => category.navigate && navigation.navigate('Profile')}
+              activeOpacity={category.navigate ? 0.7 : 1}
+            >
+              <MaterialCommunityIcons 
+                name={category.icon} 
+                size={24} 
+                color="#007AFF"
+              />
+              <Text style={styles.categoryTitle}>{category.title}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View style={styles.divider} />
+        
+        <FlatList
+          data={workouts}
+          renderItem={renderWorkout}
+          keyExtractor={item => item.id}
+          scrollEnabled={false}
+          ListHeaderComponent={
+            <Text style={styles.sectionTitle}>Latest Activities</Text>
+          }
+          contentContainerStyle={styles.feedContainer}
+        />
+      </ScrollView>
+    </SafeAreaView>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#fff',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e3f2fd',
+  },
+  pageTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#333',
+  },
+  profileImage: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#e3f2fd',
+  },
+  categoriesWrapper: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 12,
+    paddingBottom: 0,
+    gap: 8,
+  },
+  categoryBox: {
+    width: '48%',
+    height: 70,
+    backgroundColor: '#e3f2fd',
+    borderRadius: 12,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      }
+    })
+  },
+  categoryTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    flex: 1,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#e3f2fd',
+    marginVertical: 12,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 16,
+    paddingHorizontal: 16,
+  },
+  feedContainer: {
+    paddingBottom: 20,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  pageTitle: {
+    fontSize: 24,
+    fontWeight: '600',
+  },
+  profileImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  categoriesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 12,
+    gap: 8,
+  },
+  categoryBox: {
+    width: '48%',
+    aspectRatio: 1.5,
+    backgroundColor: '#e3f2fd',
+    borderRadius: 12,
+    padding: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      }
+    })
+  },
+  categoryTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    textAlign: 'center',
+  },
+  feedContainer: {
+    padding: 16,
   },
   listContent: {
     padding: 16,
   },
   workoutCard: {
-    marginBottom: 16,
+    backgroundColor: '#fff',
     borderRadius: 12,
-    elevation: 2,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e3f2fd',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      }
+    })
   },
   userInfo: {
     flexDirection: 'row',
@@ -274,6 +484,7 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 16,
     fontWeight: '600',
+    color: '#007AFF',
   },
   timestamp: {
     fontSize: 12,
@@ -289,7 +500,7 @@ const styles = StyleSheet.create({
   workoutStats: {
     marginRight: 16,
     fontSize: 14,
-    color: '#444',
+    color: '#666',
   },
   exercisesList: {
     marginTop: 8,
@@ -302,12 +513,25 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     marginTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
     paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#e3f2fd',
   },
   actionButton: {
     marginRight: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e3f2fd',
+    backgroundColor: '#fff',
+    minWidth: 72,
+  },
+  likedButton: {
+    backgroundColor: '#FF3B30',
+    borderColor: '#FF3B30',
+  },
+  activeCommentButton: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
   },
   loading: {
     padding: 20,
@@ -353,16 +577,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 8,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#e3f2fd',
     borderRadius: 20,
     paddingLeft: 16,
+    borderWidth: 1,
+    borderColor: '#007AFF',
   },
   commentInput: {
     flex: 1,
     paddingVertical: 8,
     fontSize: 14,
+    color: '#333',
   },
   divider: {
-    marginVertical: 8,
+    height: 1,
+    backgroundColor: '#e3f2fd',
+    marginVertical: 12,
   }
 });
+
+export default CommunityScreen;

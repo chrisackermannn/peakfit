@@ -289,6 +289,8 @@ export default function LoginScreen({ navigation }) {
             onPress={handleGoogleSignIn}
             style={styles.googleButton}
             icon="google"
+            color="#007AFF"  // This fixes the purple text
+            labelStyle={{ color: '#007AFF' }}
             disabled={loading}
           >
             Continue with Google
@@ -347,7 +349,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   innerContainer: {
-    flex: 1,
+    flex: 1, 
     padding: 24,
     justifyContent: 'space-between',
   },
@@ -359,11 +361,13 @@ const styles = StyleSheet.create({
     width: 100,
     height: 100,
     marginBottom: 16,
+    backgroundColor: '#e3f2fd', // Light blue background
+    borderRadius: 50,
   },
   title: {
     fontSize: 32,
     fontWeight: '700',
-    color: '#007AFF',
+    color: '#007AFF', // Changed from #6b5b95 to blue
     marginBottom: 8,
   },
   subtitle: {
@@ -375,15 +379,34 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   input: {
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#e3f2fd', // Light blue background
     padding: 16,
     borderRadius: 12,
     marginBottom: 16,
     fontSize: 16,
   },
   primaryButton: {
-    padding: 4,
+    backgroundColor: '#007AFF',
     borderRadius: 12,
+  },
+  googleButton: {
+    backgroundColor: '#e3f2fd',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#007AFF',
+  },
+  toggleContainer: {
+    marginTop: 24,
+    alignItems: 'center',
+  },
+  toggleText: {
+    color: '#007AFF', // Changed from #6b5b95 to blue
+    fontSize: 16,
+  },
+  error: {
+    color: '#FF3B30',
+    textAlign: 'center',
+    marginBottom: 16,
   },
   divider: {
     flexDirection: 'row',
@@ -398,23 +421,6 @@ const styles = StyleSheet.create({
   dividerText: {
     marginHorizontal: 16,
     color: '#666',
-  },
-  googleButton: {
-    borderRadius: 12,
-    borderColor: '#E0E0E0',
-  },
-  toggleContainer: {
-    marginTop: 24,
-    alignItems: 'center',
-  },
-  toggleText: {
-    color: '#007AFF',
-    fontSize: 16,
-  },
-  error: {
-    color: '#FF3B30',
-    textAlign: 'center',
-    marginBottom: 16,
   },
   modalContainer: {
     flex: 1,
@@ -433,4 +439,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 20,
   },
+  button: {
+    backgroundColor: '#007AFF',
+    borderRadius: 12,
+  }
 });

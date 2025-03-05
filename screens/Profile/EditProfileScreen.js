@@ -6,6 +6,7 @@ import { getStorage, ref, uploadBytes, getDownloadURL, uploadBytesResumable } fr
 import { doc, updateDoc } from 'firebase/firestore';
 import { db, storage } from '../../Firebase/firebaseConfig';
 import { useAuth } from '../../context/AuthContext';
+import * as FileSystem from 'expo-file-system';
 
 const defaultAvatar = require('../../assets/default-avatar.png');
 
@@ -54,20 +55,38 @@ export default function EditProfileScreen({ navigation }) {
   const uploadImage = async (uri) => {
     try {
       setLoading(true);
+
+      // 1. Get file info and validate size
+      const fileInfo = await FileSystem.getInfoAsync(uri);
+      if (fileInfo.size > 5 * 1024 * 1024) {
+        throw new Error('Image must be less than 5MB');
+      }
+
+      // 2. Get file extension
+      const fileExtension = uri.split('.').pop() || 'jpg';
+      const contentType = `image/${fileExtension.toLowerCase()}`;
+
+      // 3. Convert to blob
       const response = await fetch(uri);
       const blob = await response.blob();
-      
-      const filename = `${user.uid}_${Date.now()}.jpg`;
-      const storageRef = ref(storage, `profilePics/${user.uid}/${filename}`);
-      
+
+      // 4. Create unique filename
+      const filename = `profile_${Date.now()}.${fileExtension}`;
+      const fullPath = `profilePics/${user.uid}/${filename}`;
+
+      // 5. Create storage reference
+      const storageRef = ref(storage, fullPath);
+
+      // 6. Set proper metadata
       const metadata = {
-        contentType: 'image/jpeg',
+        contentType: contentType,
         customMetadata: {
           userId: user.uid,
           uploadedAt: new Date().toISOString()
         }
       };
 
+      // 7. Start upload with proper error handling
       const uploadTask = uploadBytesResumable(storageRef, blob, metadata);
 
       return new Promise((resolve, reject) => {
@@ -78,22 +97,33 @@ export default function EditProfileScreen({ navigation }) {
             setUploadProgress(progress);
           },
           (error) => {
-            console.error('Upload error:', error);
-            reject(error);
+            console.error('Upload error details:', error);
+            switch (error.code) {
+              case 'storage/unauthorized':
+                reject(new Error('Not authorized'));
+                break;
+              case 'storage/canceled':
+                reject(new Error('Upload canceled'));
+                break;
+              case 'storage/unknown':
+                reject(new Error(`Server Error: ${error.serverResponse}`));
+                break;
+              default:
+                reject(error);
+            }
           },
           async () => {
             try {
               const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
               resolve(downloadURL);
             } catch (error) {
-              console.error('Get URL error:', error);
-              reject(error);
+              reject(new Error('Failed to get download URL'));
             }
           }
         );
       });
     } catch (error) {
-      console.error('Image upload error:', error);
+      console.error('Upload error:', error);
       throw error;
     } finally {
       setLoading(false);
@@ -145,20 +175,55 @@ export default function EditProfileScreen({ navigation }) {
 
   const handleSave = async () => {
     if (!validateForm()) return;
-
+    
     try {
       setLoading(true);
       let photoURL = user?.photoURL;
 
       if (imageUri && imageUri !== user?.photoURL) {
-        photoURL = await uploadImage(imageUri);
+        try {
+          photoURL = await uploadImage(imageUri);
+          console.log('Upload successful:', photoURL);
+        } catch (uploadError) {
+          console.error('Upload error:', uploadError);
+          Alert.alert(
+            'Upload Error',
+            'Failed to upload profile picture. Would you like to continue updating other profile information?',
+            [
+              { 
+                text: 'Cancel', 
+                style: 'cancel',
+                onPress: () => setLoading(false)
+              },
+              {
+                text: 'Continue',
+                onPress: async () => {
+                  try {
+                    await updateProfileData(user?.photoURL);
+                    Alert.alert('Success', 'Profile updated without new photo');
+                    navigation.goBack();
+                  } catch (error) {
+                    Alert.alert('Error', 'Failed to update profile: ' + error.message);
+                  }
+                }
+              }
+            ]
+          );
+          return;
+        }
       }
 
       await updateProfileData(photoURL);
       Alert.alert('Success', 'Profile updated successfully');
       navigation.goBack();
     } catch (error) {
-      Alert.alert('Error', error.message);
+      console.error('Save error:', error);
+      Alert.alert(
+        'Error',
+        error.code === 'storage/unknown' 
+          ? 'Failed to upload image. Please try a different image or try again later.'
+          : error.message
+      );
     } finally {
       setLoading(false);
     }

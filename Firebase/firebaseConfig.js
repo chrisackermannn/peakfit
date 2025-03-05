@@ -21,7 +21,7 @@ const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 });
 
-const storage = getStorage(app);
+const storage = getStorage(app, "gs://fir-basics-90f1d.appspot.com");
 
 // Initialize Auth with persistence
 const auth = Platform.OS === 'web' 

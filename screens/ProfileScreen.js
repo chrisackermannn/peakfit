@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, FlatList, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, FlatList, ActivityIndicator, Platform } from 'react-native';
 import { Button, Divider, Card, IconButton, Avatar } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
 import { getStats, getUserWorkouts } from '../data/firebaseHelpers';
@@ -126,7 +126,8 @@ const ProfileScreen = ({ navigation }) => {
             mode="outlined"
             onPress={() => navigation.navigate('EditProfile')}
             style={styles.editButton}
-            labelStyle={styles.editButtonLabel}
+            labelStyle={{ color: '#007AFF' }} // Fix purple text
+            color="#007AFF"
           >
             Edit Profile
           </Button>
@@ -227,6 +228,7 @@ const ProfileScreen = ({ navigation }) => {
                       icon="chevron-right" 
                       size={24}
                       onPress={() => navigation.navigate('WorkoutDetail', { workoutId: item.id })}
+                      color="#007AFF"
                     />
                   </View>
                   
@@ -298,7 +300,18 @@ const styles = StyleSheet.create({
     width: 100,
     height: 100,
     borderRadius: 50,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#e3f2fd',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      }
+    })
   },
   editBadge: {
     position: 'absolute',
@@ -344,7 +357,19 @@ const styles = StyleSheet.create({
     marginHorizontal: 4,
     padding: 16,
     alignItems: 'center',
-    elevation: 2,
+    backgroundColor: '#e3f2fd',
+    borderRadius: 12,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      }
+    })
   },
   statNumber: {
     fontSize: 24,
@@ -376,11 +401,22 @@ const styles = StyleSheet.create({
   },
   measurementBox: { 
     width: '48%', 
-    backgroundColor: '#f5f5f5', 
+    backgroundColor: '#e3f2fd',
     padding: 15, 
-    borderRadius: 10, 
+    borderRadius: 12, 
     marginBottom: 10, 
-    alignItems: 'center' 
+    alignItems: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      }
+    })
   },
   measurementValue: { 
     fontSize: 18, 
@@ -420,8 +456,9 @@ const styles = StyleSheet.create({
   },
   workoutCard: {
     marginBottom: 15,
+    backgroundColor: '#e3f2fd',
+    borderRadius: 12,
     elevation: 2,
-    borderRadius: 10
   },
   workoutHeader: {
     flexDirection: 'row',
@@ -463,7 +500,8 @@ const styles = StyleSheet.create({
     marginBottom: 15
   },
   startWorkoutButton: {
-    backgroundColor: '#007AFF'
+    backgroundColor: '#007AFF',
+    borderRadius: 8,
   }
 });
 
