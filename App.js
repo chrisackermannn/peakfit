@@ -15,24 +15,24 @@ const Stack = createNativeStackNavigator();
 
 // Create a separate component for the navigation structure
 function AppNavigator() {
-  const [isFirstLaunch, setIsFirstLaunch] = useState(null);
+    const [isFirstLaunch, setIsFirstLaunch] = useState(null);
 
-  useEffect(() => {
-    const checkFirstLaunch = async () => {
-      const hasLaunched = await AsyncStorage.getItem('hasLaunched');
-      if (hasLaunched === null) {
-        await AsyncStorage.setItem('hasLaunched', 'true');
-        setIsFirstLaunch(true);
-      } else {
-        setIsFirstLaunch(false);
-      }
-    };
-    checkFirstLaunch();
-  }, []);
+    useEffect(() => {
+      const checkFirstLaunch = async () => {
+        const hasLaunched = await AsyncStorage.getItem('hasLaunched');
+        if (hasLaunched === null) {
+          await AsyncStorage.setItem('hasLaunched', 'true');
+          setIsFirstLaunch(true);
+        } else {
+          setIsFirstLaunch(false);
+        }
+      };
+      checkFirstLaunch();
+    }, []);
 
-  if (isFirstLaunch === null) {
-    return null;
-  }
+    if (isFirstLaunch === null) {
+      return null;
+    }
 
   return (
     <Stack.Navigator 
