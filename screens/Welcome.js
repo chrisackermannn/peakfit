@@ -15,7 +15,7 @@ const Welcome = ({ navigation }) => {
 
     const handleGetStarted = async () => {
         await AsyncStorage.setItem('hasLaunched', 'true');
-        navigation.navigate('Welcome'); // or 'Tabs' if you want to skip the login screen
+        navigation.navigate('Login'); // or 'Tabs' if you want to skip the login screen
     };
 
     return (

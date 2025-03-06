@@ -88,6 +88,8 @@ const ProfileScreen = ({ navigation }) => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -260,7 +262,7 @@ const ProfileScreen = ({ navigation }) => {
       <TouchableOpacity style={styles.option} onPress={() => navigation.navigate('PrivacySettings')}>
         <Text style={styles.optionText}>Privacy Settings</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.option} onPress={logout}>
+      <TouchableOpacity style={styles.option} onPress={() => navigation.navigate('Login')}>
         <Text style={[styles.optionText, { color: 'red' }]}>Log Out</Text>
       </TouchableOpacity>
     </ScrollView>
