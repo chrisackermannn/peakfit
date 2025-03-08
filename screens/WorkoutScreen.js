@@ -11,10 +11,11 @@ import {
   ActivityIndicator,
   Animated,
   Platform,
-  SafeAreaView
+  SafeAreaView,
+  Alert  // Add this import
 } from 'react-native';
 import { Button, Card, IconButton, Surface } from 'react-native-paper';
-import { exercisesAPI, getExercises } from '../data/exerciseAPI';
+import { getInitialExercises, searchExercises } from '../data/exerciseAPI'; // Update imports
 import { saveWorkoutToProfile, saveWorkoutGlobally } from '../data/firebaseHelpers';
 import { useAuth } from '../context/AuthContext';
 import { serverTimestamp } from 'firebase/firestore';
@@ -100,27 +101,23 @@ export default function WorkoutScreen() {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const timerRef = useRef(null);
   const [editingExercise, setEditingExercise] = useState(null);
+  const [searchTimeout, setSearchTimeout] = useState(null);
 
   useEffect(() => {
-    let isMounted = true;
-    const loadExercises = async () => {
+    const fetchExercises = async () => {
       setLoadingExercises(true);
       try {
-        const exerciseList = await getExercises();
-        if (isMounted) {
-          setExercises(exerciseList);
-          setFilteredExercises(exerciseList);
-        }
+        const data = await getInitialExercises(30);
+        setExercises(data);
+        setFilteredExercises(data);
       } catch (error) {
-        console.error('Error fetching exercises:', error);
+        console.error("Error fetching exercises:", error);
+        Alert.alert("Error", "Failed to load exercises");
       } finally {
-        if (isMounted) {
-          setLoadingExercises(false);
-        }
+        setLoadingExercises(false);
       }
     };
-    loadExercises();
-    return () => { isMounted = false; }
+    fetchExercises();
   }, []);
 
   useEffect(() => {
@@ -146,10 +143,42 @@ export default function WorkoutScreen() {
 
   const handleSearch = (text) => {
     setSearchQuery(text);
-    const filtered = exercises.filter(exercise =>
+    
+    // Clear any existing timeout
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+    }
+    
+    // If search is empty, show initial exercises
+    if (!text.trim()) {
+      setFilteredExercises(exercises);
+      return;
+    }
+    
+    // If search is local and quick
+    const localResults = exercises.filter(exercise =>
       exercise.name.toLowerCase().includes(text.toLowerCase())
     );
-    setFilteredExercises(filtered);
+    setFilteredExercises(localResults);
+    
+    // Set timeout for API search
+    const timeout = setTimeout(async () => {
+      if (text.trim().length >= 2) {
+        setLoadingExercises(true);
+        try {
+          const results = await searchExercises(text);
+          if (results.length > 0) {
+            setFilteredExercises(results);
+          }
+        } catch (error) {
+          console.error("Search error:", error);
+        } finally {
+          setLoadingExercises(false);
+        }
+      }
+    }, 500);
+    
+    setSearchTimeout(timeout);
   };
 
   const selectExercise = (exercise) => {
