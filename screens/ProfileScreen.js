@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, FlatList, ActivityIndicator, Platform } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, FlatList, ActivityIndicator, Platform, RefreshControl } from 'react-native';
 import { Button, Divider, Card, IconButton, Avatar } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
 import { getStats, getUserWorkouts } from '../data/firebaseHelpers';
@@ -7,7 +7,7 @@ import { format } from 'date-fns';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 
-const ProfileScreen = ({ navigation }) => {
+const ProfileScreen = ({ navigation, route }) => {
   const { user, logout } = useAuth();
   const [stats, setStats] = useState({});
   const [workouts, setWorkouts] = useState([]);
@@ -16,7 +16,9 @@ const ProfileScreen = ({ navigation }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [totalWeight, setTotalWeight] = useState(0);
   const [badges, setBadges] = useState([]);
+  const [imageKey, setImageKey] = useState(Date.now());
 
+  // Load data on initial mount when user exists
   useEffect(() => {
     if (user?.uid) {
       loadUserData();
@@ -25,24 +27,33 @@ const ProfileScreen = ({ navigation }) => {
     }
   }, [user]);
 
-  // Add refresh listener when screen is focused
+  // Handle navigation focus events (coming back from EditProfileScreen)
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
-      if (user?.uid) loadUserData();
+      console.log("Screen focused, checking for refresh params");
+      
+      if (route.params?.refresh || route.params?.forceRefresh) {
+        console.log("Refresh parameter detected, reloading data");
+        
+        if (user?.uid) {
+          // Force image update by changing key
+          setImageKey(Date.now());
+          // Load user data from firestore
+          loadUserData();
+        }
+        
+        // Clear the parameters to prevent unnecessary refreshes
+        navigation.setParams({ refresh: undefined, forceRefresh: undefined });
+      }
     });
+    
     return unsubscribe;
-  }, [navigation, user]);
+  }, [navigation, route.params]);
 
-  const calculateTotalWeight = (workouts) => {
-    return workouts.reduce((total, workout) => {
-      const workoutTotal = workout.exercises.reduce((subtotal, exercise) => {
-        return subtotal + (exercise.weight * exercise.sets * exercise.reps);
-      }, 0);
-      return total + workoutTotal;
-    }, 0);
-  };
-
-  const loadUserData = async () => {
+  // Define loadUserData as a useCallback to avoid recreation on each render
+  const loadUserData = useCallback(async () => {
+    if (!user?.uid) return;
+    
     try {
       setLoading(true);
       const [userStats, userWorkouts] = await Promise.all([
@@ -63,7 +74,11 @@ const ProfileScreen = ({ navigation }) => {
       if (userStats?.length > 0) {
         setStats(userStats[0]);
       }
+      
       setError(null);
+      // Update image key to force re-render of image component
+      setImageKey(Date.now());
+      
     } catch (err) {
       console.error("Error loading user data:", err);
       setError(err.message);
@@ -71,6 +86,15 @@ const ProfileScreen = ({ navigation }) => {
       setLoading(false);
       setRefreshing(false);
     }
+  }, [user]);
+
+  const calculateTotalWeight = (workouts) => {
+    return workouts.reduce((total, workout) => {
+      const workoutTotal = workout.exercises.reduce((subtotal, exercise) => {
+        return subtotal + (exercise.weight * exercise.sets * exercise.reps);
+      }, 0);
+      return total + workoutTotal;
+    }, 0);
   };
 
   // Format helpers
@@ -88,7 +112,18 @@ const ProfileScreen = ({ navigation }) => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  if (loading) {
+  // Handle manual refresh
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadUserData();
+  }, [loadUserData]);
+
+  // Handler function for edit profile button
+  const handleEditProfile = useCallback(() => {
+    navigation.navigate('EditProfile', { fromProfile: true });
+  }, [navigation]);
+
+  if (loading && !refreshing) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#007AFF" />
@@ -101,18 +136,26 @@ const ProfileScreen = ({ navigation }) => {
       style={styles.container}
       contentContainerStyle={styles.contentContainer}
       showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          colors={['#007AFF']}
+        />
+      }
     >
       {error && <Text style={styles.errorText}>{error}</Text>}
       
       <View style={styles.header}>
         <TouchableOpacity 
           style={styles.avatarContainer}
-          onPress={() => navigation.navigate('EditProfile')}
+          onPress={handleEditProfile}
         >
           <Image
-            source={user?.photoURL ? { uri: user.photoURL } : defaultAvatar}
+            source={user?.photoURL ? { uri: user.photoURL + '?t=' + imageKey } : defaultAvatar}
             style={styles.profileImage}
             defaultSource={defaultAvatar}
+            key={`profile-image-${imageKey}`} 
           />
           <View style={styles.editBadge}>
             <IconButton icon="pencil" size={16} color="#fff" />
@@ -124,9 +167,9 @@ const ProfileScreen = ({ navigation }) => {
           <Text style={styles.bio} numberOfLines={3}>{user?.bio || 'No bio yet'}</Text>
           <Button
             mode="outlined"
-            onPress={() => navigation.navigate('EditProfile')}
+            onPress={handleEditProfile}
             style={styles.editButton}
-            labelStyle={{ color: '#007AFF' }} // Fix purple text
+            labelStyle={{ color: '#007AFF' }}
             color="#007AFF"
           >
             Edit Profile
@@ -274,7 +317,6 @@ const calculateBadges = (totalWeight) => {
   if (totalWeight >= 1000) badges.push({ id: '1k', name: '1,000 lbs Club' });
   if (totalWeight >= 10000) badges.push({ id: '10k', name: '10,000 lbs Club' });
   if (totalWeight >= 100000) badges.push({ id: '100k', name: '100,000 lbs Club' });
-  // Add more badge tiers as needed
   
   return badges;
 };
@@ -399,7 +441,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap', 
     justifyContent: 'space-between' 
   },
-  measurementBox: { 
+  measurementBox: {
     width: '48%', 
     backgroundColor: '#e3f2fd',
     padding: 15, 
@@ -440,7 +482,7 @@ const styles = StyleSheet.create({
     textAlign: 'center', 
     marginBottom: 10 
   },
-  // New styles for workouts section
+  // Workout section styles
   workoutsContainer: {
     marginVertical: 10
   },
@@ -502,7 +544,12 @@ const styles = StyleSheet.create({
   startWorkoutButton: {
     backgroundColor: '#007AFF',
     borderRadius: 8,
-  }
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 });
 
 export default ProfileScreen;

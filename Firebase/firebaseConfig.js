@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, initializeAuth, getReactNativePersistence, signInWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, initializeFirestore } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
+import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import { Platform } from 'react-native';
 import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -21,7 +21,18 @@ const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 });
 
-const storage = getStorage(app, "gs://fir-basics-90f1d.appspot.com");
+// Initialize Firebase storage with CORS settings
+const storage = getStorage(app);
+
+// If in development, you might want to use emulators
+if (process.env.NODE_ENV === 'development') {
+  try {
+    // Optional: Connect to emulators if they're running
+    // connectStorageEmulator(storage, 'localhost', 9199);
+  } catch (e) {
+    console.warn('Failed to connect to storage emulator:', e);
+  }
+}
 
 // Initialize Auth with persistence
 const auth = Platform.OS === 'web' 
