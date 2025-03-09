@@ -1,26 +1,38 @@
-export const exercisesAPI = 
-[
-    { id: 1, name: 'Bench Press', category: 'Chest' },
-    { id: 2, name: 'Incline Bench Press', category: 'Chest' },
-    { id: 3, name: 'Dumbbell Flys', category: 'Chest' },
-    { id: 4, name: 'Push-ups', category: 'Chest' },
-    { id: 5, name: 'Squats', category: 'Legs' },
-    { id: 6, name: 'Leg Press', category: 'Legs' },
-    { id: 7, name: 'Lunges', category: 'Legs' },
-    { id: 8, name: 'Deadlift', category: 'Back' },
-    { id: 9, name: 'Pull-ups', category: 'Back' },
-    { id: 10, name: 'Bent-over Rows', category: 'Back' },
-    { id: 11, name: 'Lat Pulldown', category: 'Back' },
-    { id: 12, name: 'Overhead Press', category: 'Shoulders' },
-    { id: 13, name: 'Dumbbell Shoulder Press', category: 'Shoulders' },
-    { id: 14, name: 'Lateral Raises', category: 'Shoulders' },
-    { id: 15, name: 'Bicep Curls', category: 'Arms' },
-    { id: 16, name: 'Hammer Curls', category: 'Arms' },
-    { id: 17, name: 'Tricep Dips', category: 'Arms' },
-    { id: 18, name: 'Skull Crushers', category: 'Arms' },
-    { id: 19, name: 'Leg Curls', category: 'Legs' },
-    { id: 20, name: 'Calf Raises', category: 'Legs' },
-  ];
-  export async function getExercises() {
-    return exercisesAPI;
+import axios from 'axios';
+
+const BASE_URL = 'https://exercisedb.p.rapidapi.com';
+const API_HEADERS = {
+  'x-rapidapi-host': 'exercisedb.p.rapidapi.com',
+  'x-rapidapi-key': 'a82184d89emsha842c11b6cf5139p1e194djsn505741a7d898'
+};
+
+// Fetch initial list of exercises with limit
+export async function getInitialExercises(limit = 30) {
+  try {
+    const response = await axios.get(`${BASE_URL}/exercises?limit=${limit}`, { 
+      headers: API_HEADERS 
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching initial exercises:', error);
+    return [];
   }
+}
+
+// Search exercises by name
+export async function searchExercises(query) {
+  try {
+    if (!query || query.trim().length < 2) {
+      return [];
+    }
+    
+    const response = await axios.get(
+      `${BASE_URL}/exercises/name/${encodeURIComponent(query)}`,
+      { headers: API_HEADERS }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('Error searching exercises:', error);
+    return [];
+  }
+}
