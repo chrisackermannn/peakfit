@@ -49,15 +49,21 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0, 0, 0, 0)',
     },
     title: {
-        fontSize: 32,
+        fontSize: 40,
         color: '#fff',
         marginBottom: 20,
     },
     button: {
+        position: 'absolute',
+        bottom: 20,
         backgroundColor: '#65558F',
-        paddingVertical: 10,
+        paddingVertical: 20,
         paddingHorizontal: 20,
         borderRadius: 5,
+        width: 400,
+        alignItems: 'center',
+        
+        
     },
     buttonText: {
         color: '#fff',
