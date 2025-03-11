@@ -77,6 +77,16 @@ function AppNavigator() {
         component={PrivacySettingsScreen} 
         options={{ title: 'Privacy Settings' }} 
       />
+      {/* <Stack.Screen 
+        name="AccountInfo" 
+        component={account_Info_Screen} 
+        options={{ title: 'Account Information' }} 
+      />
+      <Stack.Screen 
+          name="Profile_Info" 
+          component={profile_Screen} 
+          options={{ title: 'Profile Information' }} 
+      /> */}
     </Stack.Navigator>
   );
 }
