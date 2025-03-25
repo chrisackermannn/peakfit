@@ -331,3 +331,73 @@ export async function addComment(workoutId, commentData) {
     throw error;
   }
 }
+
+/**
+ * ========================================
+ * =          TEMPLATES LOGIC            =
+ * ========================================
+ */
+
+/**
+ * Save a workout template
+ */
+export async function saveTemplate(userId, templateData) {
+  try {
+    if (!userId) throw new Error('User ID is required');
+    if (!templateData.exercises || !templateData.name) {
+      throw new Error('Template must include exercises array and name');
+    }
+    
+    const templatesRef = collection(db, 'users', userId, 'templates');
+    const docData = {
+      ...templateData,
+      createdAt: serverTimestamp(),
+    };
+    
+    const docRef = await addDoc(templatesRef, docData);
+    console.log(`Template saved: users/${userId}/templates/${docRef.id}`);
+    return docRef.id;
+  } catch (error) {
+    console.error('Error saving template:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get user's saved templates
+ */
+export async function getUserTemplates(userId) {
+  try {
+    if (!userId) throw new Error('User ID is required');
+    
+    const templatesRef = collection(db, 'users', userId, 'templates');
+    const q = query(templatesRef, orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
+    
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt?.toDate() || new Date()
+    }));
+  } catch (error) {
+    console.error('Error fetching templates:', error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a template
+ */
+export async function deleteTemplate(userId, templateId) {
+  try {
+    if (!userId || !templateId) throw new Error('User ID and Template ID are required');
+    
+    const templateRef = doc(db, 'users', userId, 'templates', templateId);
+    await deleteDoc(templateRef);
+    console.log(`Template deleted: users/${userId}/templates/${templateId}`);
+    return true;
+  } catch (error) {
+    console.error('Error deleting template:', error);
+    throw error;
+  }
+}

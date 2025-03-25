@@ -8,10 +8,10 @@ import {
   Platform,
   Modal,
   Image,
-  Dimensions
+  Dimensions,
+  TouchableOpacity
 } from 'react-native';
-import { TouchableOpacity } from 'react-native';
-import { Button } from 'react-native-paper';
+import { Button, Surface } from 'react-native-paper';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
 import { 
   doc, 
@@ -27,7 +27,8 @@ import { db } from '../../Firebase/firebaseConfig';
 import * as Google from 'expo-auth-session/providers/google';
 import { makeRedirectUri, ResponseType } from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
-import * as AuthSession from 'expo-auth-session';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { StatusBar } from 'expo-status-bar';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -40,41 +41,44 @@ const redirectUri = makeRedirectUri({
 const googleConfig = {
   iosClientId: '1074755682998-95lcclulfbq36di4do14imf2uvcrkaof.apps.googleusercontent.com',
   androidClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com',
-  webClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com', // Add this
+  webClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com',
   expoClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com'
 };
 
+const { width, height } = Dimensions.get('window');
+
 export default function LoginScreen({ navigation }) {
   const [request, response, promptAsync] = Google.useAuthRequest({
-    clientId: Platform.OS === 'web' ? googleConfig.webClientId : googleConfig.expoClientId, // Use webClientId for web
+    clientId: Platform.OS === 'web' ? googleConfig.webClientId : googleConfig.expoClientId,
     iosClientId: googleConfig.iosClientId,
     androidClientId: googleConfig.androidClientId,
     responseType: ResponseType.IdToken,
     redirectUri,
     scopes: ['profile', 'email'],
     usePKCE: true,
-    proxy: true // Enable proxy for development
+    proxy: true
   });
-
+  
   const auth = getAuth();
+  
   // Email/Password vs Registration
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-
+  
   // Username Modal
   const [showUsernameModal, setShowUsernameModal] = useState(false);
   const [username, setUsername] = useState('');
   const [tempUserData, setTempUserData] = useState(null);
-
+  
   useEffect(() => {
     if (response?.type === 'success') {
       handleGoogleResponse(response);
     }
   }, [response]);
-
+  
   const handleGoogleResponse = async (res) => {
     try {
       let idToken = res?.authentication?.idToken;
@@ -82,15 +86,15 @@ export default function LoginScreen({ navigation }) {
         idToken = res.params.id_token;
       }
       if (!idToken) throw new Error('Google authentication failed: No ID token.');
-
+      
       const credential = GoogleAuthProvider.credential(idToken);
       const userCredential = await signInWithCredential(auth, credential);
       const uid = userCredential.user.uid;
-
+      
       // Check Firestore doc
       const userDocRef = doc(db, 'users', uid);
       const userSnap = await getDoc(userDocRef);
-
+      
       if (!userSnap.exists() || !userSnap.data().username) {
         setTempUserData(userCredential.user);
         setShowUsernameModal(true);
@@ -102,20 +106,22 @@ export default function LoginScreen({ navigation }) {
       setError(err.message);
     }
   };
-
+  
   const handleLogin = async () => {
     if (!email || !password) {
       setError('Please fill in all fields');
       return;
     }
-
+    
     try {
       setLoading(true);
       setError('');
+      
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const uid = userCredential.user.uid;
       const userDocRef = doc(db, 'users', uid);
       const userSnap = await getDoc(userDocRef);
+      
       if (!userSnap.exists() || !userSnap.data().username) {
         setTempUserData(userCredential.user);
         setShowUsernameModal(true);
@@ -128,16 +134,17 @@ export default function LoginScreen({ navigation }) {
       setLoading(false);
     }
   };
-
+  
   const handleRegister = async () => {
     if (!email || !password) {
       setError('Please fill in all fields');
       return;
     }
-
+    
     try {
       setLoading(true);
       setError('');
+      
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       setTempUserData(userCredential.user);
       setShowUsernameModal(true);
@@ -147,7 +154,7 @@ export default function LoginScreen({ navigation }) {
       setLoading(false);
     }
   };
-
+  
   const handleGoogleSignIn = async () => {
     try {
       const result = await promptAsync();
@@ -173,43 +180,43 @@ export default function LoginScreen({ navigation }) {
       setError('Failed to sign in with Google. Please try again.');
     }
   };
-
+  
   // After registration or Google sign-in, user must choose a unique username
   const handleSetUsername = async () => {
     if (!username.trim()) {
       setError('Please enter a username');
       return;
     }
-
+    
     try {
       setLoading(true);
       setError('');
-
+      
       // Validate username format
       if (username.length < 3) {
         setError('Username must be at least 3 characters');
         return;
       }
-
+      
       if (!/^[a-zA-Z0-9_]+$/.test(username)) {
         setError('Username can only contain letters, numbers and underscore');
         return;
       }
-
+      
       // Check if username is taken
       const usernameQuery = await getDocs(
         query(collection(db, 'users'), where('username', '==', username.toLowerCase()))
       );
-
+      
       if (!usernameQuery.empty) {
         setError('Username is already taken');
         return;
       }
-
+      
       if (!tempUserData?.uid) {
         throw new Error('User data not found');
       }
-
+      
       // Create user document
       const userDocRef = doc(db, 'users', tempUserData.uid);
       await setDoc(userDocRef, {
@@ -219,10 +226,9 @@ export default function LoginScreen({ navigation }) {
         photoURL: tempUserData.photoURL || null,
         createdAt: serverTimestamp(),
       }, { merge: true });
-
+      
       setShowUsernameModal(false);
       navigation.replace('Tabs');
-
     } catch (err) {
       console.error('Error setting username:', err);
       setError(err.message || 'Error creating user profile');
@@ -230,217 +236,353 @@ export default function LoginScreen({ navigation }) {
       setLoading(false);
     }
   };
-
+  
   return (
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <View style={styles.innerContainer}>
-        <View style={styles.logoContainer}>
-          <Image
-            source={require('../../assets/logo.png')} // Add your logo
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <Text style={styles.title}>PeakFit</Text>
-          <Text style={styles.subtitle}>
-            {isRegister ? 'Create your account' : 'Welcome back'}
-          </Text>
-        </View>
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        <View style={styles.formContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-          />
-
-          <Button
-            mode="contained"
-            onPress={isRegister ? handleRegister : handleLogin}
-            loading={loading}
-            style={styles.primaryButton}
-            disabled={loading}
-          >
-            {isRegister ? 'Create Account' : 'Sign In'}
-          </Button>
-
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>or</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          <Button
-            mode="outlined"
-            onPress={handleGoogleSignIn}
-            style={styles.googleButton}
-            icon="google"
-            color="#007AFF"  // This fixes the purple text
-            labelStyle={{ color: '#007AFF' }}
-            disabled={loading}
-          >
-            Continue with Google
-          </Button>
-        </View>
-
-        <TouchableOpacity
-          onPress={() => {
-            setError('');
-            setIsRegister(!isRegister);
-          }}
-          style={styles.toggleContainer}
+    <View style={styles.container}>
+      <StatusBar style="light" />
+      
+      <View style={styles.backgroundContainer}>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.keyboardView}
         >
-          <Text style={styles.toggleText}>
-            {isRegister ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Username Modal */}
-      <Modal
-        visible={showUsernameModal}
-        animationType="slide"
-        transparent={true}
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Choose a Username</Text>
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-            <TextInput
-              style={styles.input}
-              placeholder="Username"
-              value={username}
-              onChangeText={setUsername}
-              autoCapitalize="none"
-            />
-            <Button
-              mode="contained"
-              onPress={handleSetUsername}
-              loading={loading}
-              style={styles.button}
-              disabled={loading}
-            >
-              Set Username
-            </Button>
+          <View style={styles.logoSection}>
+            <Surface style={styles.logoContainer}>
+              <View style={{ overflow: 'hidden' }}>
+                <MaterialCommunityIcons name="dumbbell" size={48} color="#3B82F6" />
+              </View>
+            </Surface>
+            <Text style={styles.appName}>PeakFit</Text>
+            <Text style={styles.tagline}>Your Personal Fitness Journey</Text>
           </View>
-        </View>
-      </Modal>
-    </KeyboardAvoidingView>
+          
+          <Surface style={styles.formCard}>
+            <View style={{ overflow: 'hidden' }}>
+              <Text style={styles.formTitle}>
+                {isRegister ? 'Create Account' : 'Welcome Back'}
+              </Text>
+              
+              {error ? (
+                <View style={styles.errorContainer}>
+                  <MaterialCommunityIcons name="alert-circle" size={20} color="#FF3B30" />
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              ) : null}
+              
+              <View style={styles.inputContainer}>
+                <MaterialCommunityIcons name="email-outline" size={20} color="#666" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Email"
+                  placeholderTextColor="#666"
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                />
+              </View>
+              
+              <View style={styles.inputContainer}>
+                <MaterialCommunityIcons name="lock-outline" size={20} color="#666" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Password"
+                  placeholderTextColor="#666"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                />
+              </View>
+              
+              <Button
+                mode="contained"
+                onPress={isRegister ? handleRegister : handleLogin}
+                loading={loading}
+                style={styles.primaryButton}
+                contentStyle={styles.buttonContent}
+                labelStyle={styles.buttonLabel}
+                disabled={loading}
+              >
+                {isRegister ? 'Sign Up' : 'Log In'}
+              </Button>
+              
+              <View style={styles.divider}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.dividerLine} />
+              </View>
+              
+              <Button
+                mode="outlined"
+                onPress={handleGoogleSignIn}
+                icon={() => <MaterialCommunityIcons name="google" size={20} color="#3B82F6" />}
+                style={styles.googleButton}
+                contentStyle={styles.buttonContent}
+                labelStyle={styles.socialButtonLabel}
+                disabled={loading}
+              >
+                Continue with Google
+              </Button>
+              
+              <Surface style={styles.comingSoonCard}>
+                <View style={{ overflow: 'hidden' }}>
+                  <MaterialCommunityIcons name="apple" size={22} color="#999" />
+                  <Text style={styles.comingSoonText}>iOS Sign In Coming Soon</Text>
+                </View>
+              </Surface>
+              
+              <TouchableOpacity
+                onPress={() => {
+                  setError('');
+                  setIsRegister(!isRegister);
+                }}
+                style={styles.toggleContainer}
+              >
+                <Text style={styles.toggleText}>
+                  {isRegister ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Surface>
+        </KeyboardAvoidingView>
+        
+        {/* Username Modal */}
+        <Modal
+          visible={showUsernameModal}
+          animationType="slide"
+          transparent={true}
+        >
+          <View style={styles.modalOverlay}>
+            <Surface style={styles.modalCard}>
+              <View style={{ overflow: 'hidden' }}>
+                <Text style={styles.modalTitle}>Create Your Profile</Text>
+                
+                {error ? (
+                  <View style={styles.errorContainer}>
+                    <MaterialCommunityIcons name="alert-circle" size={20} color="#FF3B30" />
+                    <Text style={styles.errorText}>{error}</Text>
+                  </View>
+                ) : null}
+                
+                <Text style={styles.modalSubtitle}>
+                  Choose a unique username to continue
+                </Text>
+                
+                <View style={styles.inputContainer}>
+                  <MaterialCommunityIcons name="account-outline" size={20} color="#666" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="Username"
+                    placeholderTextColor="#666"
+                    value={username}
+                    onChangeText={setUsername}
+                    autoCapitalize="none"
+                  />
+                </View>
+                
+                <Button
+                  mode="contained"
+                  onPress={handleSetUsername}
+                  loading={loading}
+                  style={styles.primaryButton}
+                  contentStyle={styles.buttonContent}
+                  labelStyle={styles.buttonLabel}
+                  disabled={loading}
+                >
+                  Continue
+                </Button>
+              </View>
+            </Surface>
+          </View>
+        </Modal>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#0A0A0A',
   },
-  innerContainer: {
-    flex: 1, 
+  backgroundContainer: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#0A0A0A',
+  },
+  keyboardView: {
+    flex: 1,
+    justifyContent: 'center',
     padding: 24,
-    justifyContent: 'space-between',
+  },
+  logoSection: {
+    alignItems: 'center',
+    marginBottom: 40,
   },
   logoContainer: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#141414',
+    justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 60,
+    marginBottom: 20,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
-  logo: {
-    width: 100,
-    height: 100,
-    marginBottom: 16,
-    backgroundColor: '#e3f2fd', // Light blue background
-    borderRadius: 50,
+  appName: {
+    fontSize: 36,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginBottom: 12,
   },
-  title: {
-    fontSize: 32,
+  tagline: {
+    fontSize: 16,
+    color: '#999',
+    marginBottom: 20,
+  },
+  formCard: {
+    backgroundColor: '#141414',
+    borderRadius: 24,
+    padding: 24,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  formTitle: {
+    fontSize: 24,
     fontWeight: '700',
-    color: '#007AFF', // Changed from #6b5b95 to blue
-    marginBottom: 8,
+    color: '#FFFFFF',
+    marginBottom: 24,
+    textAlign: 'center',
   },
-  subtitle: {
-    fontSize: 18,
-    color: '#666',
-    marginBottom: 32,
-  },
-  formContainer: {
-    width: '100%',
-  },
-  input: {
-    backgroundColor: '#e3f2fd', // Light blue background
-    padding: 16,
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 59, 48, 0.1)',
+    padding: 12,
     borderRadius: 12,
     marginBottom: 16,
+  },
+  errorText: {
+    color: '#FF3B30',
+    fontSize: 14,
+    marginLeft: 8,
+    flex: 1,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E1E1E',
+    borderRadius: 12,
+    marginBottom: 16,
+    paddingHorizontal: 16,
+  },
+  inputIcon: {
+    marginRight: 12,
+  },
+  textInput: {
+    flex: 1,
+    color: '#FFFFFF',
     fontSize: 16,
+    paddingVertical: 14,
+    paddingRight: 16,
+    // These styles fix the background color issue
+    backgroundColor: 'transparent',
+    outlineStyle: 'none', // For web platforms
+    outlineWidth: 0,       // For web platforms
   },
   primaryButton: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#3B82F6',
     borderRadius: 12,
+    marginTop: 8,
+    marginBottom: 20,
   },
-  googleButton: {
-    backgroundColor: '#e3f2fd',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#007AFF',
+  buttonContent: {
+    paddingVertical: 8,
   },
-  toggleContainer: {
-    marginTop: 24,
-    alignItems: 'center',
-  },
-  toggleText: {
-    color: '#007AFF', // Changed from #6b5b95 to blue
+  buttonLabel: {
     fontSize: 16,
-  },
-  error: {
-    color: '#FF3B30',
-    textAlign: 'center',
-    marginBottom: 16,
+    fontWeight: '600',
   },
   divider: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 24,
+    marginBottom: 20,
   },
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#E0E0E0',
+    backgroundColor: '#333',
   },
   dividerText: {
-    marginHorizontal: 16,
-    color: '#666',
+    color: '#999',
+    paddingHorizontal: 12,
+    fontSize: 14,
   },
-  modalContainer: {
-    flex: 1,
+  googleButton: {
+    borderColor: '#3B82F6',
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+  socialButtonLabel: {
+    color: '#3B82F6',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  comingSoonCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#333',
+    borderStyle: 'dashed',
   },
-  modalContent: {
-    backgroundColor: 'white',
-    margin: 20,
-    padding: 20,
-    borderRadius: 10,
+  comingSoonText: {
+    color: '#999',
+    fontSize: 14,
+    marginLeft: 8,
+  },
+  toggleContainer: {
+    alignItems: 'center',
+  },
+  toggleText: {
+    color: '#3B82F6',
+    fontSize: 15,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: '#141414',
+    borderRadius: 24,
+    padding: 24,
   },
   modalTitle: {
     fontSize: 24,
-    fontWeight: 'bold',
+    fontWeight: '700',
+    color: '#FFFFFF',
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
-  button: {
-    backgroundColor: '#007AFF',
-    borderRadius: 12,
-  }
+  modalSubtitle: {
+    color: '#999',
+    fontSize: 16,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
 });

@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { Button, Card, IconButton, Surface } from 'react-native-paper';
 import { getInitialExercises, searchExercises } from '../data/exerciseAPI'; // Update imports
-import { saveWorkoutToProfile, saveWorkoutGlobally } from '../data/firebaseHelpers';
+import { saveWorkoutToProfile, saveWorkoutGlobally, getUserTemplates } from '../data/firebaseHelpers';
 import { useAuth } from '../context/AuthContext';
 import { serverTimestamp } from 'firebase/firestore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -30,55 +30,126 @@ const CompletionModal = ({ visible, onDismiss, onSave, onPost, timer, workouts, 
   >
     <View style={styles.completionModalContainer}>
       <Surface style={styles.completionModalContent}>
-        <Text style={styles.completionTitle}>Workout Complete! 🎉</Text>
-        
-        <View style={styles.workoutSummary}>
-          <View style={styles.summaryItem}>
-            <MaterialCommunityIcons name="clock-outline" size={24} color="#007AFF" />
-            <Text style={styles.summaryValue}>
-              {Math.floor(timer/60)}:{(timer%60).toString().padStart(2,'0')}
-            </Text>
-            <Text style={styles.summaryLabel}>Duration</Text>
+        <View style={{ overflow: 'hidden' }}>
+          <Text style={styles.completionTitle}>Workout Complete! 🎉</Text>
+          
+          <View style={styles.workoutSummary}>
+            <View style={styles.summaryItem}>
+              <MaterialCommunityIcons name="clock-outline" size={24} color="#007AFF" />
+              <Text style={styles.summaryValue}>
+                {Math.floor(timer/60)}:{(timer%60).toString().padStart(2,'0')}
+              </Text>
+              <Text style={styles.summaryLabel}>Duration</Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <MaterialCommunityIcons name="dumbbell" size={24} color="#007AFF" />
+              <Text style={styles.summaryValue}>{workouts.length}</Text>
+              <Text style={styles.summaryLabel}>Exercises</Text>
+            </View>
           </View>
-          <View style={styles.summaryItem}>
-            <MaterialCommunityIcons name="dumbbell" size={24} color="#007AFF" />
-            <Text style={styles.summaryValue}>{workouts.length}</Text>
-            <Text style={styles.summaryLabel}>Exercises</Text>
-          </View>
-        </View>
 
-        <View style={styles.completionActions}>
-          <Button
-            mode="contained"
-            onPress={onSave}
-            style={[styles.completionButton, styles.saveButton]}
-            loading={saveLoading}
-          >
-            Save to Profile
-          </Button>
-          <Button
-            mode="contained"
-            onPress={onPost}
-            style={[styles.completionButton, styles.postButton]}
-            loading={postLoading}
-          >
-            Share Workout
-          </Button>
-          <Button
-            mode="outlined"
-            onPress={onDismiss}
-            style={styles.dismissButton}
-            color="#007AFF"
-            labelStyle={{ color: '#007AFF' }}
-          >
-            Dismiss
-          </Button>
+          <View style={styles.completionActions}>
+            <Button
+              mode="contained"
+              onPress={onSave}
+              style={[styles.completionButton, styles.saveButton]}
+              loading={saveLoading}
+            >
+              Save to Profile
+            </Button>
+            <Button
+              mode="contained"
+              onPress={onPost}
+              style={[styles.completionButton, styles.postButton]}
+              loading={postLoading}
+            >
+              Share Workout
+            </Button>
+            <Button
+              mode="outlined"
+              onPress={onDismiss}
+              style={styles.dismissButton}
+              color="#007AFF"
+              labelStyle={{ color: '#007AFF' }}
+            >
+              Dismiss
+            </Button>
+          </View>
         </View>
       </Surface>
     </View>
   </Modal>
 );
 
+// Add this component definition in WorkoutScreen.js before the main WorkoutScreen component
+
+const TemplatesModal = ({ visible, onClose, templates, loading, onApplyTemplate }) => {
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalContainer}>
+        <Surface style={styles.modalContent}>
+          <View style={{ overflow: 'hidden' }}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Workout Templates</Text>
+              <IconButton
+                icon="close"
+                size={24}
+                color="#FFF"
+                onPress={onClose}
+              />
+            </View>
+            
+            {loading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#3B82F6" />
+              </View>
+            ) : templates.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <MaterialCommunityIcons name="file-document-outline" size={48} color="#666" />
+                <Text style={styles.emptyText}>No saved templates</Text>
+                <Text style={styles.emptySubtext}>
+                  Save workout templates from the Community tab
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={templates}
+                keyExtractor={item => item.id}
+                renderItem={({item}) => (
+                  <TouchableOpacity 
+                    style={styles.templateItem}
+                    onPress={() => onApplyTemplate(item)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.templateContent}>
+                      <View style={styles.templateIcon}>
+                        <MaterialCommunityIcons name="dumbbell" size={24} color="#3B82F6" />
+                      </View>
+                      <View style={styles.templateInfo}>
+                        <Text style={styles.templateName}>{item.name}</Text>
+                        <Text style={styles.templateMeta}>
+                          {item.exercises.length} exercises • From {item.sourceWorkout?.userDisplayName || 'You'}
+                        </Text>
+                      </View>
+                      <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+                    </View>
+                  </TouchableOpacity>
+                )}
+              />
+            )}
+          </View>
+        </Surface>
+      </View>
+    </Modal>
+  );
+};
+
+// Then update your WorkoutScreen component to use this modal
 export default function WorkoutScreen() {
   const { user } = useAuth();
 
@@ -102,6 +173,9 @@ export default function WorkoutScreen() {
   const timerRef = useRef(null);
   const [editingExercise, setEditingExercise] = useState(null);
   const [searchTimeout, setSearchTimeout] = useState(null);
+  const [templates, setTemplates] = useState([]);
+  const [templatesModalVisible, setTemplatesModalVisible] = useState(false);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
 
   useEffect(() => {
     const fetchExercises = async () => {
@@ -130,6 +204,12 @@ export default function WorkoutScreen() {
     }
     return () => clearInterval(timerRef.current);
   }, [isTiming]);
+
+  useEffect(() => {
+    if (user?.uid) {
+      loadTemplates();
+    }
+  }, [user]);
 
   const startWorkout = () => {
     setIsWorkoutStarted(true);
@@ -341,6 +421,47 @@ export default function WorkoutScreen() {
     }
   };
 
+  const loadTemplates = async () => {
+    if (!user?.uid) return;
+    
+    try {
+      setLoadingTemplates(true);
+      const userTemplates = await getUserTemplates(user.uid);
+      setTemplates(userTemplates);
+    } catch (error) {
+      console.error('Error loading templates:', error);
+      Alert.alert('Error', 'Failed to load your workout templates');
+    } finally {
+      setLoadingTemplates(false);
+    }
+  };
+
+  const applyTemplate = (template) => {
+    // Convert template exercises to workout exercises format
+    const templateExercises = template.exercises.map(ex => ({
+      id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+      name: ex.name,
+      sets: ex.sets,
+      reps: ex.reps,
+      weight: '' // Empty weight for user to fill in
+    }));
+    
+    setWorkouts(templateExercises);
+    setTemplatesModalVisible(false);
+    
+    // Auto-start the workout if not started
+    if (!isWorkoutStarted) {
+      setIsWorkoutStarted(true);
+      setIsTiming(true);
+    }
+    
+    // Show success message
+    Alert.alert(
+      'Template Applied',
+      'The workout template has been loaded. Please fill in your desired weights.'
+    );
+  };
+
   useEffect(() => {
     console.log('Current User from AuthContext:', user);
   }, [user]);
@@ -365,29 +486,46 @@ export default function WorkoutScreen() {
       {!isWorkoutStarted ? (
         <View style={styles.startWorkoutContainer}>
           <Surface style={styles.workoutInfoCard}>
-            <Text style={styles.workoutTitle}>Start New Workout</Text>
-            <TouchableOpacity onPress={startWorkout} style={styles.startButton}>
-              <MaterialCommunityIcons name="dumbbell" size={32} color="#fff" />
-              <Text style={styles.startButtonText}>Begin Workout</Text>
-            </TouchableOpacity>
+            <View style={{ overflow: 'hidden' }}>
+              <Text style={styles.workoutTitle}>Start New Workout</Text>
+              <View style={styles.startButtonsContainer}>
+                <TouchableOpacity onPress={startWorkout} style={styles.startButton}>
+                  <MaterialCommunityIcons name="dumbbell" size={32} color="#fff" />
+                  <Text style={styles.startButtonText}>Begin Workout</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={styles.templatesButton}
+                  onPress={() => {
+                    loadTemplates();
+                    setTemplatesModalVisible(true);
+                  }}
+                >
+                  <MaterialCommunityIcons name="file-document-outline" size={24} color="#FFF" />
+                  <Text style={styles.templatesButtonText}>Use Template</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </Surface>
         </View>
       ) : (
         <View style={styles.workoutContainer}>
           <Surface style={styles.workoutInfoCard}>
-            <Text style={styles.workoutTitle}>Current Workout</Text>
-            <View style={styles.workoutMetaContainer}>
-              <View style={styles.metaItem}>
-                <MaterialCommunityIcons name="timer-outline" size={24} color="#007AFF" />
-                <Text style={styles.metaValue}>
-                  {Math.floor(timer/60)}:{(timer%60).toString().padStart(2,'0')}
-                </Text>
-                <Text style={styles.metaLabel}>Duration</Text>
-              </View>
-              <View style={styles.metaItem}>
-                <MaterialCommunityIcons name="dumbbell" size={24} color="#007AFF" />
-                <Text style={styles.metaValue}>{workouts.length}</Text>
-                <Text style={styles.metaLabel}>Exercises</Text>
+            <View style={{ overflow: 'hidden' }}>
+              <Text style={styles.workoutTitle}>Current Workout</Text>
+              <View style={styles.workoutMetaContainer}>
+                <View style={styles.metaItem}>
+                  <MaterialCommunityIcons name="timer-outline" size={24} color="#007AFF" />
+                  <Text style={styles.metaValue}>
+                    {Math.floor(timer/60)}:{(timer%60).toString().padStart(2,'0')}
+                  </Text>
+                  <Text style={styles.metaLabel}>Duration</Text>
+                </View>
+                <View style={styles.metaItem}>
+                  <MaterialCommunityIcons name="dumbbell" size={24} color="#007AFF" />
+                  <Text style={styles.metaValue}>{workouts.length}</Text>
+                  <Text style={styles.metaLabel}>Exercises</Text>
+                </View>
               </View>
             </View>
           </Surface>
@@ -398,31 +536,33 @@ export default function WorkoutScreen() {
             style={styles.exerciseList}
             renderItem={({item}) => (
               <Surface style={styles.exerciseCard}>
-                <View style={styles.exerciseContent}>
-                  <View style={styles.exerciseIconContainer}>
-                    <View style={[styles.shape, styles.triangle]} />
-                    <View style={[styles.shape, styles.square]} />
-                    <View style={[styles.shape, styles.circle]} />
-                  </View>
-                  <View style={styles.exerciseDetails}>
-                    <Text style={styles.exerciseName}>{item.name}</Text>
-                    <Text style={styles.exerciseStats}>
-                      {item.sets}×{item.reps} | {item.weight} lbs
-                    </Text>
-                  </View>
-                  <View style={styles.exerciseActions}>
-                    <IconButton
-                      icon="pencil-outline"
-                      size={24}
-                      color="#007AFF"
-                      onPress={() => handleEditExercise(item)}
-                    />
-                    <IconButton
-                      icon="delete-outline"
-                      size={24}
-                      color="#FF3B30"
-                      onPress={() => deleteWorkout(index)}
-                    />
+                <View style={{ overflow: 'hidden' }}>
+                  <View style={styles.exerciseContent}>
+                    <View style={styles.exerciseIconContainer}>
+                      <View style={[styles.shape, styles.triangle]} />
+                      <View style={[styles.shape, styles.square]} />
+                      <View style={[styles.shape, styles.circle]} />
+                    </View>
+                    <View style={styles.exerciseDetails}>
+                      <Text style={styles.exerciseName}>{item.name}</Text>
+                      <Text style={styles.exerciseStats}>
+                        {item.sets}×{item.reps} | {item.weight} lbs
+                      </Text>
+                    </View>
+                    <View style={styles.exerciseActions}>
+                      <IconButton
+                        icon="pencil-outline"
+                        size={24}
+                        color="#007AFF"
+                        onPress={() => handleEditExercise(item)}
+                      />
+                      <IconButton
+                        icon="delete-outline"
+                        size={24}
+                        color="#FF3B30"
+                        onPress={() => deleteWorkout(index)}
+                      />
+                    </View>
                   </View>
                 </View>
               </Surface>
@@ -457,81 +597,83 @@ export default function WorkoutScreen() {
       >
         <View style={styles.modalContainer}>
           <Surface style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Add Exercise</Text>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search exercises..."
-              value={searchQuery}
-              onChangeText={handleSearch}
-              placeholderTextColor="#666"
-            />
-            
-            {loadingExercises ? (
-              <ActivityIndicator size="large" color="#007AFF" />
-            ) : (
-              <FlatList
-                data={filteredExercises}
-                keyExtractor={item => item.name}
-                renderItem={({item}) => (
-                  <TouchableOpacity
-                    style={[
-                      styles.exerciseItem,
-                      selectedExercise === item && styles.selectedExercise
-                    ]}
-                    onPress={() => selectExercise(item)}
-                  >
-                    <Text style={styles.exerciseItemText}>{item.name}</Text>
-                  </TouchableOpacity>
-                )}
-                style={styles.exerciseList}
+            <View style={{ overflow: 'hidden' }}>
+              <Text style={styles.modalTitle}>Add Exercise</Text>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search exercises..."
+                value={searchQuery}
+                onChangeText={handleSearch}
+                placeholderTextColor="#666"
               />
-            )}
+              
+              {loadingExercises ? (
+                <ActivityIndicator size="large" color="#007AFF" />
+              ) : (
+                <FlatList
+                  data={filteredExercises}
+                  keyExtractor={item => item.name}
+                  renderItem={({item}) => (
+                    <TouchableOpacity
+                      style={[
+                        styles.exerciseItem,
+                        selectedExercise === item && styles.selectedExercise
+                      ]}
+                      onPress={() => selectExercise(item)}
+                    >
+                      <Text style={styles.exerciseItemText}>{item.name}</Text>
+                    </TouchableOpacity>
+                  )}
+                  style={styles.exerciseList}
+                />
+              )}
 
-            <View style={styles.exerciseInputs}>
-              <TextInput
-                style={styles.input}
-                placeholder="Weight (lbs)"
-                keyboardType="numeric"
-                value={weight}
-                onChangeText={setWeight}
-                placeholderTextColor="#666"
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Reps"
-                keyboardType="numeric"
-                value={reps}
-                onChangeText={setReps}
-                placeholderTextColor="#666"
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Sets"
-                keyboardType="numeric"
-                value={sets}
-                onChangeText={setSets}
-                placeholderTextColor="#666"
-              />
-            </View>
+              <View style={styles.exerciseInputs}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Weight (lbs)"
+                  keyboardType="numeric"
+                  value={weight}
+                  onChangeText={setWeight}
+                  placeholderTextColor="#666"
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Reps"
+                  keyboardType="numeric"
+                  value={reps}
+                  onChangeText={setReps}
+                  placeholderTextColor="#666"
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Sets"
+                  keyboardType="numeric"
+                  value={sets}
+                  onChangeText={setSets}
+                  placeholderTextColor="#666"
+                />
+              </View>
 
-            <View style={styles.modalActions}>
-              <Button
-                mode="contained"
-                onPress={addWorkout}
-                style={styles.modalButton}
-                contentStyle={styles.modalButtonContent}
-              >
-                Add Exercise
-              </Button>
-              <Button
-                mode="outlined"
-                onPress={() => setModalVisible(false)}
-                style={styles.modalCancelButton}
-                color="#007AFF"
-                labelStyle={{ color: '#007AFF' }}
-              >
-                Cancel
-              </Button>
+              <View style={styles.modalActions}>
+                <Button
+                  mode="contained"
+                  onPress={addWorkout}
+                  style={styles.modalButton}
+                  contentStyle={styles.modalButtonContent}
+                >
+                  Add Exercise
+                </Button>
+                <Button
+                  mode="outlined"
+                  onPress={() => setModalVisible(false)}
+                  style={styles.modalCancelButton}
+                  color="#007AFF"
+                  labelStyle={{ color: '#007AFF' }}
+                >
+                  Cancel
+                </Button>
+              </View>
             </View>
           </Surface>
         </View>
@@ -547,280 +689,545 @@ export default function WorkoutScreen() {
         saveLoading={saveLoading}
         postLoading={postLoading}
       />
+
+      <TemplatesModal 
+        visible={templatesModalVisible}
+        onClose={() => setTemplatesModalVisible(false)}
+        templates={templates}
+        loading={loadingTemplates}
+        onApplyTemplate={applyTemplate}
+      />
     </SafeAreaView>
   );
 }
 
-// styles section of WorkoutScreen.js
-const styles = StyleSheet.create({
+// WorkoutScreen.js
+const existingStyles = {
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#0A0A0A',
   },
+
+  // Header
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    backgroundColor: '#fff',
+    backgroundColor: '#141414',
+    borderBottomColor: '#222',
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
   },
-  restTimerButton: {
-    backgroundColor: '#e3f2fd', // Changed from #d3d3d3
+
+  backButton: {
+    width: 40,
+    height: 40,
     borderRadius: 12,
-    paddingHorizontal: 20,
+    backgroundColor: '#222',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
+
+  restTimerButton: {
+    backgroundColor: '#3B82F6',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+
+  // Start Workout Section
+  startWorkoutContainer: {
+    flex: 1,
+    padding: 16,
+    justifyContent: 'center',
+  },
+
+  workoutInfoCard: {
+    backgroundColor: '#141414',
+    borderRadius: 24,
+    padding: 24,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.4,
+        shadowRadius: 16,
+      },
+      android: {
+        elevation: 8,
+      }
+    }),
+  },
+
+  workoutTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#FFF',
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+
+  startButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+
+  startButton: {
+    backgroundColor: '#3B82F6',
+    borderRadius: 16,
+    padding: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  startButtonText: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginLeft: 12,
+  },
+
+  templatesButton: {
+    backgroundColor: '#10B981',
+    borderRadius: 16,
+    padding: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  templatesButtonText: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginLeft: 12,
+  },
+
+  // Workout Progress
   workoutContainer: {
     flex: 1,
     padding: 16,
   },
-  workoutInfoCard: {
-    backgroundColor: '#e3f2fd', // Changed from #d3d3d3
-    borderRadius: 16,
-    padding: 24,
-    marginBottom: 20,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 4,
-      }
-    })
-  },
-  workoutTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 20,
-  },
+
   workoutMetaContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
+    marginTop: 16,
   },
+
   metaItem: {
     alignItems: 'center',
   },
-  metaIcon: {
-    opacity: 0.6,
-    marginBottom: 8,
-  },
+
   metaValue: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFF',
+    marginTop: 8,
   },
+
   metaLabel: {
     fontSize: 14,
-    color: '#666',
+    color: '#999',
     marginTop: 4,
   },
+
+  // Exercise List
+  exerciseList: {
+    marginTop: 24,
+  },
+
   exerciseCard: {
-    backgroundColor: '#e3f2fd', // Changed from #d3d3d3
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: '#141414',
+    borderRadius: 16,
     marginBottom: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      }
-    })
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#222',
   },
-  exerciseIconContainer: {
-    width: 50,
-    height: 50,
-    marginRight: 16,
-    justifyContent: 'center',
+
+  exerciseContent: {
+    flexDirection: 'row',
     alignItems: 'center',
   },
-  exerciseIcon: {
-    flexDirection: 'column',
-    alignItems: 'center',
-  },
-  shape: {
-    width: 16,
-    height: 16,
-    margin: 2,
-  },
-  triangle: {
-    width: 0,
-    height: 0,
-    backgroundColor: 'transparent',
-    borderStyle: 'solid',
-    borderLeftWidth: 8,
-    borderRightWidth: 8,
-    borderBottomWidth: 16,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderBottomColor: '#808080',
-  },
-  square: {
-    backgroundColor: '#808080',
-  },
-  circle: {
-    backgroundColor: '#808080',
-    borderRadius: 8,
-  },
+
   exerciseDetails: {
     flex: 1,
+    marginLeft: 16,
   },
+
   exerciseName: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '600',
-    color: '#333',
+    color: '#FFF',
     marginBottom: 4,
   },
+
   exerciseStats: {
     fontSize: 15,
-    color: '#666',
+    color: '#999',
   },
+
+  exerciseActions: {
+    flexDirection: 'row',
+  },
+
+  // Add Exercise Button
   addButton: {
-    backgroundColor: '#007AFF', // Changed from #6b5b95
+    backgroundColor: '#3B82F6',
+    borderRadius: 16,
+    padding: 16,
+    margin: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 16,
-    borderRadius: 12,
-    marginVertical: 16,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#3B82F6',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
+      },
+      android: {
+        elevation: 8,
+      }
+    }),
   },
+
   addButtonText: {
-    color: '#fff',
-    fontSize: 16,
+    color: '#FFF',
+    fontSize: 17,
     fontWeight: '600',
-    marginLeft: 8,
+    marginLeft: 12,
   },
+
+  // End Workout Button
   endButton: {
-    backgroundColor: '#007AFF', // Changed from #6b5b95
-    borderRadius: 12,
-    marginTop: 'auto',
-    marginBottom: Platform.OS === 'ios' ? 16 : 0,
+    backgroundColor: '#EF4444',
+    borderRadius: 16,
+    padding: 16,
+    margin: 16,
+    marginTop: 8,
   },
+
+  // Exercise Modal
   modalContainer: {
     flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.5)',
   },
+
   modalContent: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: '#141414',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     padding: 24,
     maxHeight: '80%',
   },
+
   modalTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
-    color: '#333',
-    marginBottom: 16,
+    color: '#FFF',
+    marginBottom: 20,
   },
+
   searchInput: {
-    backgroundColor: '#f5f5f5',
-    padding: 16,
+    backgroundColor: '#222',
     borderRadius: 12,
+    padding: 16,
+    color: '#FFF',
     fontSize: 16,
-    marginBottom: 16,
+    marginBottom: 20,
   },
-  exerciseList: {
-    maxHeight: 200,
-    marginBottom: 16,
-  },
+
   exerciseItem: {
     padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  selectedExercise: {
-    backgroundColor: '#f0f0f0',
-  },
-  exerciseInputs: {
-    gap: 12,
-  },
-  input: {
-    backgroundColor: '#f5f5f5',
-    padding: 16,
     borderRadius: 12,
+    marginBottom: 8,
+    backgroundColor: '#222',
+  },
+
+  selectedExercise: {
+    backgroundColor: '#3B82F6',
+  },
+
+  exerciseItemText: {
+    color: '#FFF',
     fontSize: 16,
   },
+
+  exerciseInputs: {
+    marginTop: 20,
+    gap: 12,
+  },
+
+  input: {
+    backgroundColor: '#222',
+    borderRadius: 12,
+    padding: 16,
+    color: '#FFF',
+    fontSize: 16,
+  },
+
   modalActions: {
     marginTop: 24,
     gap: 12,
   },
+
   modalButton: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#3B82F6',
     borderRadius: 12,
   },
+
   modalCancelButton: {
-    borderColor: '#007AFF',
+    borderColor: '#3B82F6',
     borderRadius: 12,
   },
-  dismissButton: {
-    borderColor: '#007AFF',
-  },
+
+  // Completion Modal
   completionModalContainer: {
     flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    padding: 20,
+    padding: 16,
   },
+
   completionModalContent: {
-    backgroundColor: 'white',
-    borderRadius: 20,
+    backgroundColor: '#141414',
+    borderRadius: 24,
     padding: 24,
   },
+
   completionTitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#333',
+    color: '#FFF',
     textAlign: 'center',
     marginBottom: 24,
   },
+
   workoutSummary: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     marginBottom: 24,
   },
+
   summaryItem: {
+    backgroundColor: '#222',
+    borderRadius: 16,
+    padding: 20,
     alignItems: 'center',
+    flex: 1,
+    marginHorizontal: 6,
   },
+
   summaryValue: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#FFF',
     marginTop: 8,
   },
+
   summaryLabel: {
     fontSize: 14,
-    color: '#666',
+    color: '#999',
     marginTop: 4,
   },
+
   completionActions: {
     gap: 12,
   },
-  completionButton: {
-    borderRadius: 12,
-    backgroundColor: '#007AFF',
-  },
+
   saveButton: {
-    backgroundColor: '#34C759',
+    backgroundColor: '#3B82F6',
   },
+
   postButton: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#10B981',
   },
-  dismissButton: {
-    borderColor: '#007AFF', // Changed from #6b5b95
+
+  // Templates Modal
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  exerciseActions: {
+
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#666',
+    marginTop: 16,
+  },
+
+  emptySubtext: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 8,
+    textAlign: 'center',
+    paddingHorizontal: 32,
+  },
+
+  templateItem: {
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 8,
+    backgroundColor: '#222',
     flexDirection: 'row',
     alignItems: 'center',
-  }
+  },
+
+  templateContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+
+  templateIcon: {
+    marginRight: 16,
+  },
+
+  templateInfo: {
+    flex: 1,
+  },
+
+  templateName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFF',
+  },
+
+  templateMeta: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: 4,
+  },
+
+  templateDate: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+  },
+};
+
+const templateStyles = {
+  // Template selection button
+  startButtonsContainer: {
+    width: '100%',
+  },
+  
+  templatesButton: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 16,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+  },
+  
+  templatesButtonText: {
+    color: '#FFF',
+    fontSize: 17,
+    fontWeight: '600',
+    marginLeft: 12,
+  },
+  
+  // Template modal styles
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  
+  loadingContainer: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  
+  emptyContainer: {
+    alignItems: 'center',
+    padding: 40,
+  },
+  
+  emptyText: {
+    color: '#CCC',
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+  },
+  
+  emptySubtext: {
+    color: '#999',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 8,
+    maxWidth: '80%',
+  },
+  
+  templateItem: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 16,
+    marginBottom: 12,
+    overflow: 'hidden',
+  },
+  
+  templateContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+  },
+  
+  templateIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#202020',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  
+  templateInfo: {
+    flex: 1,
+  },
+  
+  templateName: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  
+  templateMeta: {
+    color: '#999',
+    fontSize: 14,
+    marginBottom: 2,
+  },
+  
+  templateDate: {
+    color: '#666',
+    fontSize: 12,
+  },
+};
+
+// Add this line to merge with existing styles
+const styles = StyleSheet.create({
+  ...existingStyles,
+  ...templateStyles
 });

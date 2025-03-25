@@ -10,6 +10,7 @@ import AccountSettingsScreen from './screens/Profile/AccountSettingsScreen';
 import PrivacySettingsScreen from './screens/Profile/PrivacySettingsScreen';
 import Welcome from './screens/Welcome';
 import { PaperProvider } from 'react-native-paper';
+import FlashMessage from "react-native-flash-message";
 
 const Stack = createNativeStackNavigator();
 
@@ -86,9 +87,12 @@ export default function App() {
   return (
     <AuthProvider>
       <PaperProvider>
-        <NavigationContainer>
-          <AppNavigator />
-        </NavigationContainer>
+        <>
+          <NavigationContainer>
+            <AppNavigator />
+          </NavigationContainer>
+          <FlashMessage position="top" />
+        </>
       </PaperProvider>
     </AuthProvider>
   );

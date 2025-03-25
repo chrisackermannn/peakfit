@@ -12,16 +12,19 @@ import {
   ScrollView,
   SafeAreaView,
   Platform,
-  Image
+  Image,
+  Modal
 } from 'react-native';
 import { Card, Button, IconButton, Avatar, Divider, Surface } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
-import { getGlobalWorkouts, toggleLike, addComment } from '../data/firebaseHelpers';
+import { getGlobalWorkouts, toggleLike, addComment, saveTemplate } from '../data/firebaseHelpers';
 import { format } from 'date-fns';
 import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
+import { showMessage } from "react-native-flash-message";
 
 const defaultAvatar = require('../assets/default-avatar.png');
 
@@ -33,6 +36,9 @@ const CommunityScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [comment, setComment] = useState('');
   const [selectedWorkout, setSelectedWorkout] = useState(null);
+  const [templateNameModalVisible, setTemplateNameModalVisible] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [currentWorkout, setCurrentWorkout] = useState(null);
   
   const categories = [
     { id: 1, title: 'Workouts', icon: 'dumbbell', navigate: true },
@@ -41,7 +47,7 @@ const CommunityScreen = () => {
     { id: 4, title: 'Trending', icon: 'trending-up', navigate: false }
   ];
 
-  // Add formatDuration helper function
+  // Format duration helper function
   const formatDuration = (seconds) => {
     if (!seconds && seconds !== 0) return '--';
     const mins = Math.floor(seconds / 60);
@@ -73,11 +79,11 @@ const CommunityScreen = () => {
         setLoading(false);
       });
 
-      return () => unsubscribe(); // Return cleanup function
+      return () => unsubscribe();
     } catch (error) {
       console.error('Error loading workouts:', error);
       setLoading(false);
-      return () => {}; // Return empty cleanup if error
+      return () => {};
     }
   };
 
@@ -105,7 +111,6 @@ const CommunityScreen = () => {
     }
   };
 
-  // Add userPhotoURL to comment data
   const handleComment = async (workoutId) => {
     if (!comment.trim() || !user?.uid) return;
     
@@ -124,6 +129,57 @@ const CommunityScreen = () => {
     } catch (error) {
       console.error('Error adding comment:', error);
       Alert.alert('Error', 'Failed to post comment');
+    }
+  };
+
+  // Template functions
+  const copyWorkoutTemplate = (workout) => {
+    if (!user?.uid) {
+      Alert.alert('Login Required', 'Please log in to save templates');
+      return;
+    }
+    
+    setCurrentWorkout(workout);
+    setTemplateName('');
+    setTemplateNameModalVisible(true);
+  };
+
+  const saveWorkoutTemplate = async () => {
+    if (!templateName.trim() || !currentWorkout) {
+      Alert.alert('Error', 'Please provide a name for the template');
+      return;
+    }
+    
+    try {
+      const templateData = {
+        name: templateName.trim(),
+        sourceWorkout: {
+          id: currentWorkout.id,
+          userDisplayName: currentWorkout.userDisplayName || 'Anonymous'
+        },
+        exercises: currentWorkout.exercises.map(ex => ({
+          name: ex.name,
+          sets: ex.sets,
+          reps: ex.reps
+          // Weight intentionally omitted
+        }))
+      };
+      
+      await saveTemplate(user.uid, templateData);
+      
+      showMessage({
+        message: "Template Saved!",
+        description: "Access it when starting a new workout",
+        type: "success",
+        backgroundColor: "#3B82F6",
+        duration: 3000,
+        icon: "success"
+      });
+      
+      setTemplateNameModalVisible(false);
+    } catch (error) {
+      console.error('Error saving template:', error);
+      Alert.alert('Error', 'Could not save workout template');
     }
   };
 
@@ -171,7 +227,7 @@ const CommunityScreen = () => {
     </View>
   );
 
-  // Update Card render to include comments
+  // Render workout card
   const renderWorkout = ({ item }) => (
     <Card style={styles.workoutCard}>
       <Card.Content>
@@ -190,7 +246,16 @@ const CommunityScreen = () => {
               </Text>
             </View>
           </TouchableOpacity>
-          <IconButton icon="dots-vertical" size={20} onPress={() => {}} />
+          <View style={styles.cardActions}>
+            <IconButton 
+              icon="content-copy" 
+              size={20} 
+              color="#3B82F6"
+              onPress={() => copyWorkoutTemplate(item)}
+              style={styles.copyButton}
+            />
+            <IconButton icon="dots-vertical" size={20} onPress={() => {}} />
+          </View>
         </View>
 
         <View style={styles.workoutContent}>
@@ -282,6 +347,9 @@ const CommunityScreen = () => {
       <ScrollView 
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
       >
         <View style={styles.categoriesWrapper}>
           {categories.map(category => (
@@ -294,7 +362,7 @@ const CommunityScreen = () => {
               <MaterialCommunityIcons 
                 name={category.icon} 
                 size={24} 
-                color="#007AFF"
+                color="#3B82F6"
               />
               <Text style={styles.categoryTitle}>{category.title}</Text>
             </TouchableOpacity>
@@ -312,8 +380,59 @@ const CommunityScreen = () => {
             <Text style={styles.sectionTitle}>Latest Activities</Text>
           }
           contentContainerStyle={styles.feedContainer}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>No workouts found</Text>
+          }
         />
       </ScrollView>
+
+      {/* Template Name Modal */}
+      <Modal
+        visible={templateNameModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setTemplateNameModalVisible(false)}
+      >
+        <View style={styles.modalContainer}>
+          <Surface style={styles.modalContent}>
+            <View style={{ overflow: 'hidden' }}>
+              <Text style={styles.modalTitle}>Save Template</Text>
+              <Text style={styles.modalSubtitle}>Give this workout template a name:</Text>
+              
+              <TextInput
+                style={styles.templateNameInput}
+                value={templateName}
+                onChangeText={setTemplateName}
+                placeholder="Template Name"
+                placeholderTextColor="#666"
+              />
+              
+              <View style={styles.modalActions}>
+                <Button
+                  mode="outlined"
+                  onPress={() => {
+                    setTemplateNameModalVisible(false);
+                    setTemplateName('');
+                    setCurrentWorkout(null);
+                  }}
+                  style={styles.cancelButton}
+                >
+                  Cancel
+                </Button>
+                
+                <Button
+                  mode="contained"
+                  onPress={saveWorkoutTemplate}
+                  style={styles.saveButton}
+                  disabled={!templateName.trim()}
+                >
+                  Save
+                </Button>
+              </View>
+            </View>
+          </Surface>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -321,7 +440,7 @@ const CommunityScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#0A0A0A',
   },
   scrollView: {
     flex: 1,
@@ -331,142 +450,69 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    backgroundColor: '#fff',
+    backgroundColor: '#141414',
+    borderBottomColor: '#222',
     borderBottomWidth: 1,
-    borderBottomColor: '#e3f2fd',
   },
   pageTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#333',
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#FFF',
   },
   profileImage: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#e3f2fd',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#3B82F6',
   },
   categoriesWrapper: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    padding: 12,
-    paddingBottom: 0,
-    gap: 8,
+    padding: 16,
+    gap: 12,
   },
   categoryBox: {
     width: '48%',
     height: 70,
-    backgroundColor: '#e3f2fd',
+    backgroundColor: '#141414',
     borderRadius: 12,
     padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      }
-    })
+    borderWidth: 1,
+    borderColor: '#222',
   },
   categoryTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: '#FFF',
     flex: 1,
   },
   divider: {
     height: 1,
-    backgroundColor: '#e3f2fd',
+    backgroundColor: '#222',
     marginVertical: 12,
   },
   sectionTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#333',
+    color: '#FFF',
     marginBottom: 16,
     paddingHorizontal: 16,
   },
   feedContainer: {
     paddingBottom: 20,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  pageTitle: {
-    fontSize: 24,
-    fontWeight: '600',
-  },
-  profileImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  categoriesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: 12,
-    gap: 8,
-  },
-  categoryBox: {
-    width: '48%',
-    aspectRatio: 1.5,
-    backgroundColor: '#e3f2fd',
-    borderRadius: 12,
-    padding: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      }
-    })
-  },
-  categoryTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    textAlign: 'center',
-  },
-  feedContainer: {
-    padding: 16,
-  },
-  listContent: {
-    padding: 16,
-  },
   workoutCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
+    backgroundColor: '#141414',
+    borderRadius: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#e3f2fd',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      }
-    })
+    borderColor: '#222',
+    overflow: 'hidden',
+    marginHorizontal: 16,
   },
   userInfo: {
     flexDirection: 'row',
@@ -484,10 +530,11 @@ const styles = StyleSheet.create({
   userName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#007AFF',
+    color: '#FFF',
+    marginBottom: 2,
   },
   timestamp: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#666',
   },
   workoutContent: {
@@ -496,56 +543,62 @@ const styles = StyleSheet.create({
   workoutMeta: {
     flexDirection: 'row',
     marginBottom: 8,
+    gap: 16,
   },
   workoutStats: {
-    marginRight: 16,
-    fontSize: 14,
-    color: '#666',
+    fontSize: 15,
+    color: '#999',
   },
   exercisesList: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    padding: 12,
     marginTop: 8,
   },
   exerciseItem: {
-    fontSize: 14,
-    color: '#333',
-    marginBottom: 4,
+    fontSize: 15,
+    color: '#FFF',
+    marginBottom: 8,
+    paddingLeft: 8,
+    borderLeftWidth: 2,
+    borderLeftColor: '#3B82F6',
   },
   actions: {
     flexDirection: 'row',
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#e3f2fd',
+    borderTopColor: '#222',
+    gap: 12,
   },
   actionButton: {
-    marginRight: 8,
-    borderRadius: 8,
+    flex: 1,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e3f2fd',
-    backgroundColor: '#fff',
-    minWidth: 72,
+    borderColor: '#222',
   },
   likedButton: {
-    backgroundColor: '#FF3B30',
-    borderColor: '#FF3B30',
-  },
-  activeCommentButton: {
-    backgroundColor: '#007AFF',
-    borderColor: '#007AFF',
-  },
-  loading: {
-    padding: 20,
-    alignItems: 'center',
-  },
-  emptyText: {
-    textAlign: 'center',
-    color: '#666',
-    marginTop: 20,
+    backgroundColor: '#3B82F6',
+    borderColor: '#3B82F6',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#0A0A0A',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 20,
+  },
+  cardActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  copyButton: {
+    marginRight: -8,
   },
   commentsSection: {
     marginTop: 12,
@@ -559,41 +612,85 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   commentUser: {
-    fontWeight: '600',
-    marginLeft: 8,
     fontSize: 14,
+    fontWeight: '600',
+    color: '#FFF',
+    marginLeft: 8,
+    flex: 1,
   },
   commentTime: {
-    color: '#666',
     fontSize: 12,
-    marginLeft: 8,
+    color: '#666',
   },
   commentText: {
-    fontSize: 14,
+    fontSize: 15,
+    color: '#CCC',
     marginLeft: 32,
-    color: '#333',
+    lineHeight: 20,
   },
   commentInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
-    backgroundColor: '#e3f2fd',
-    borderRadius: 20,
-    paddingLeft: 16,
-    borderWidth: 1,
-    borderColor: '#007AFF',
+    padding: 16,
+    backgroundColor: '#141414',
+    borderTopWidth: 1,
+    borderTopColor: '#222',
+    gap: 12,
   },
   commentInput: {
     flex: 1,
-    paddingVertical: 8,
-    fontSize: 14,
-    color: '#333',
+    backgroundColor: '#1A1A1A',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    color: '#FFF',
+    fontSize: 15,
   },
-  divider: {
-    height: 1,
-    backgroundColor: '#e3f2fd',
-    marginVertical: 12,
-  }
+  modalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  modalContent: {
+    backgroundColor: '#141414',
+    borderRadius: 16,
+    padding: 24,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#FFF',
+    marginBottom: 8,
+  },
+  modalSubtitle: {
+    fontSize: 16,
+    color: '#999',
+    marginBottom: 20,
+  },
+  templateNameInput: {
+    backgroundColor: '#222',
+    borderRadius: 12,
+    padding: 16,
+    color: '#FFF',
+    fontSize: 16,
+    marginBottom: 24,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  cancelButton: {
+    flex: 1,
+    borderColor: '#3B82F6',
+    borderRadius: 12,
+  },
+  saveButton: {
+    flex: 1,
+    backgroundColor: '#3B82F6',
+    borderRadius: 12,
+  },
 });
 
 export default CommunityScreen;
