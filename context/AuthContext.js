@@ -70,10 +70,25 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const checkAdminStatus = async (userId) => {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', userId));
+      if (userDoc.exists()) {
+        return userDoc.data().isAdmin === true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Error checking admin status:', error);
+      return false;
+    }
+  };
+
   const value = {
     user,
     loading,
-    updateUserProfile
+    updateUserProfile,
+    checkAdminStatus,
+    // ...other existing values
   };
 
   return (

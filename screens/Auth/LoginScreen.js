@@ -9,7 +9,8 @@ import {
   Modal,
   Image,
   Dimensions,
-  TouchableOpacity
+  TouchableOpacity,
+  Alert
 } from 'react-native';
 import { Button, Surface } from 'react-native-paper';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
@@ -38,6 +39,7 @@ const redirectUri = makeRedirectUri({
   path: 'auth'
 });
 
+// Update these values with your actual Google client IDs
 const googleConfig = {
   iosClientId: '1074755682998-95lcclulfbq36di4do14imf2uvcrkaof.apps.googleusercontent.com',
   androidClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com',
@@ -48,15 +50,22 @@ const googleConfig = {
 const { width, height } = Dimensions.get('window');
 
 export default function LoginScreen({ navigation }) {
+  // Configure Google Auth Request with proper platform-specific parameters
   const [request, response, promptAsync] = Google.useAuthRequest({
-    clientId: Platform.OS === 'web' ? googleConfig.webClientId : googleConfig.expoClientId,
+    clientId: Platform.select({
+      ios: googleConfig.iosClientId,
+      android: googleConfig.androidClientId,
+      web: googleConfig.webClientId,
+      default: googleConfig.expoClientId
+    }),
     iosClientId: googleConfig.iosClientId,
     androidClientId: googleConfig.androidClientId,
     responseType: ResponseType.IdToken,
     redirectUri,
     scopes: ['profile', 'email'],
     usePKCE: true,
-    proxy: true
+    // Only use this on iOS - important!
+    ...(Platform.OS === 'ios' ? { preferEphemeralSession: true } : {})
   });
   
   const auth = getAuth();
@@ -73,25 +82,41 @@ export default function LoginScreen({ navigation }) {
   const [username, setUsername] = useState('');
   const [tempUserData, setTempUserData] = useState(null);
   
+  // Handle Google Auth Response
   useEffect(() => {
     if (response?.type === 'success') {
       handleGoogleResponse(response);
+    } else if (response?.type === 'error') {
+      console.error('Google Auth Error:', response.error);
+      setError('Google authentication failed. Please try again.');
     }
   }, [response]);
   
   const handleGoogleResponse = async (res) => {
     try {
+      setLoading(true);
+      setError('');
+      
+      // Get the ID token from the response
       let idToken = res?.authentication?.idToken;
+      
       if (!idToken && res?.params?.id_token) {
         idToken = res.params.id_token;
       }
-      if (!idToken) throw new Error('Google authentication failed: No ID token.');
       
+      if (!idToken) {
+        console.error('No ID token found in response', res);
+        throw new Error('Google authentication failed: No ID token.');
+      }
+      
+      // Create credential for Firebase
       const credential = GoogleAuthProvider.credential(idToken);
+      
+      // Sign in to Firebase
       const userCredential = await signInWithCredential(auth, credential);
       const uid = userCredential.user.uid;
       
-      // Check Firestore doc
+      // Check if user document exists and has username
       const userDocRef = doc(db, 'users', uid);
       const userSnap = await getDoc(userDocRef);
       
@@ -99,11 +124,22 @@ export default function LoginScreen({ navigation }) {
         setTempUserData(userCredential.user);
         setShowUsernameModal(true);
       } else {
+        // User has full profile, navigate to app
         navigation.replace('Tabs');
       }
     } catch (err) {
-      console.error('Google Sign-In Error:', err.message);
-      setError(err.message);
+      console.error('Google Sign-In Error:', err);
+      
+      // Show user-friendly error message
+      if (Platform.OS === 'ios' && err.message?.includes('network')) {
+        setError('Network error. Please check your connection and try again.');
+      } else if (err.code === 'auth/account-exists-with-different-credential') {
+        setError('An account already exists with the same email address but different sign-in credentials.');
+      } else {
+        setError('Failed to sign in with Google. Please try again.');
+      }
+    } finally {
+      setLoading(false);
     }
   };
   
@@ -129,7 +165,20 @@ export default function LoginScreen({ navigation }) {
         navigation.replace('Tabs');
       }
     } catch (err) {
-      setError(err.message);
+      console.error('Login error:', err);
+      
+      // Show user-friendly error messages
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/invalid-email') {
+        setError('Invalid email or password');
+      } else if (err.code === 'auth/user-not-found') {
+        setError('No account found with this email');
+      } else if (err.code === 'auth/wrong-password') {
+        setError('Incorrect password');
+      } else if (err.code === 'auth/too-many-requests') {
+        setError('Too many failed attempts. Try again later');
+      } else {
+        setError(err.message || 'An error occurred during login');
+      }
     } finally {
       setLoading(false);
     }
@@ -149,7 +198,18 @@ export default function LoginScreen({ navigation }) {
       setTempUserData(userCredential.user);
       setShowUsernameModal(true);
     } catch (err) {
-      setError(err.message);
+      console.error('Registration error:', err);
+      
+      // Show user-friendly error messages
+      if (err.code === 'auth/email-already-in-use') {
+        setError('Email address already in use');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('Please enter a valid email address');
+      } else if (err.code === 'auth/weak-password') {
+        setError('Password is too weak');
+      } else {
+        setError(err.message || 'Registration failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -157,27 +217,32 @@ export default function LoginScreen({ navigation }) {
   
   const handleGoogleSignIn = async () => {
     try {
-      const result = await promptAsync();
+      setLoading(true);
+      setError('');
       
-      if (result?.type === 'success') {
-        const { id_token } = result.params;
-        const credential = GoogleAuthProvider.credential(id_token);
-        const auth = getAuth();
-        const userCredential = await signInWithCredential(auth, credential);
-        
-        const userDocRef = doc(db, 'users', userCredential.user.uid);
-        const userDoc = await getDoc(userDocRef);
-        
-        if (!userDoc.exists() || !userDoc.data().username) {
-          setTempUserData(userCredential.user);
-          setShowUsernameModal(true);
+      // Configure special options for iOS
+      const options = Platform.OS === 'ios' ? { 
+        preferEphemeralSession: true,
+        showInRecents: true,
+      } : {};
+      
+      // Show auth prompt
+      const result = await promptAsync(options);
+      
+      // Handle result in useEffect to avoid race conditions
+      if (result.type !== 'success') {
+        if (result.type === 'cancel') {
+          setError('Sign in cancelled');
         } else {
-          navigation.replace('Tabs');
+          console.warn('Non-success result type:', result.type);
+          setError('Failed to sign in with Google');
         }
+        setLoading(false);
       }
     } catch (error) {
       console.error('Google Sign In Error:', error);
       setError('Failed to sign in with Google. Please try again.');
+      setLoading(false);
     }
   };
   
@@ -247,8 +312,8 @@ export default function LoginScreen({ navigation }) {
           style={styles.keyboardView}
         >
           <View style={styles.logoSection}>
-            <Surface style={styles.logoContainer}>
-              <View style={{ overflow: 'hidden' }}>
+            <Surface style={styles.logoShadow}>
+              <View style={styles.logoContainer}>
                 <MaterialCommunityIcons name="dumbbell" size={48} color="#3B82F6" />
               </View>
             </Surface>
@@ -256,8 +321,8 @@ export default function LoginScreen({ navigation }) {
             <Text style={styles.tagline}>Your Personal Fitness Journey</Text>
           </View>
           
-          <Surface style={styles.formCard}>
-            <View style={{ overflow: 'hidden' }}>
+          <Surface style={styles.formShadow}>
+            <View style={styles.formCard}>
               <Text style={styles.formTitle}>
                 {isRegister ? 'Create Account' : 'Welcome Back'}
               </Text>
@@ -324,8 +389,8 @@ export default function LoginScreen({ navigation }) {
                 Continue with Google
               </Button>
               
-              <Surface style={styles.comingSoonCard}>
-                <View style={{ overflow: 'hidden' }}>
+              <Surface style={styles.comingSoonShadow}>
+                <View style={styles.comingSoonCard}>
                   <MaterialCommunityIcons name="apple" size={22} color="#999" />
                   <Text style={styles.comingSoonText}>iOS Sign In Coming Soon</Text>
                 </View>
@@ -345,57 +410,56 @@ export default function LoginScreen({ navigation }) {
             </View>
           </Surface>
         </KeyboardAvoidingView>
-        
-        {/* Username Modal */}
-        <Modal
-          visible={showUsernameModal}
-          animationType="slide"
-          transparent={true}
-        >
-          <View style={styles.modalOverlay}>
-            <Surface style={styles.modalCard}>
-              <View style={{ overflow: 'hidden' }}>
-                <Text style={styles.modalTitle}>Create Your Profile</Text>
-                
-                {error ? (
-                  <View style={styles.errorContainer}>
-                    <MaterialCommunityIcons name="alert-circle" size={20} color="#FF3B30" />
-                    <Text style={styles.errorText}>{error}</Text>
-                  </View>
-                ) : null}
-                
-                <Text style={styles.modalSubtitle}>
-                  Choose a unique username to continue
-                </Text>
-                
-                <View style={styles.inputContainer}>
-                  <MaterialCommunityIcons name="account-outline" size={20} color="#666" style={styles.inputIcon} />
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="Username"
-                    placeholderTextColor="#666"
-                    value={username}
-                    onChangeText={setUsername}
-                    autoCapitalize="none"
-                  />
-                </View>
-                
-                <Button
-                  mode="contained"
-                  onPress={handleSetUsername}
-                  loading={loading}
-                  style={styles.primaryButton}
-                  contentStyle={styles.buttonContent}
-                  labelStyle={styles.buttonLabel}
-                  disabled={loading}
-                >
-                  Continue
-                </Button>
-              </View>
-            </Surface>
-          </View>
-        </Modal>
       </View>
+      
+      {/* Username Modal */}
+      <Modal
+        visible={showUsernameModal}
+        animationType="fade"
+        transparent={true}
+      >
+        <View style={styles.modalOverlay}>
+          <Surface style={styles.modalShadow}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Choose Username</Text>
+              <Text style={styles.modalSubtitle}>
+                Pick a unique username for your account
+              </Text>
+              
+              {error ? (
+                <View style={styles.errorContainer}>
+                  <MaterialCommunityIcons name="alert-circle" size={20} color="#FF3B30" />
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              ) : null}
+              
+              <View style={styles.inputContainer}>
+                <MaterialCommunityIcons name="account" size={20} color="#666" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Username"
+                  placeholderTextColor="#666"
+                  value={username}
+                  onChangeText={setUsername}
+                  autoCapitalize="none"
+                />
+              </View>
+              
+              <Button
+                mode="contained"
+                onPress={handleSetUsername}
+                loading={loading}
+                style={styles.primaryButton}
+                contentStyle={styles.buttonContent}
+                labelStyle={styles.buttonLabel}
+                disabled={loading}
+              >
+                Continue
+              </Button>
+            </View>
+          </Surface>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -403,57 +467,75 @@ export default function LoginScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#121212',
   },
   backgroundContainer: {
     flex: 1,
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#0A0A0A',
+    paddingHorizontal: 24,
+    justifyContent: 'center',
   },
   keyboardView: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    alignSelf: 'center',
   },
   logoSection: {
     alignItems: 'center',
-    marginBottom: 40,
+    marginBottom: 32,
+  },
+  logoShadow: {
+    borderRadius: 24,
+    marginBottom: 16,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      }
+    }),
   },
   logoContainer: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
+    width: 80,
+    height: 80,
+    borderRadius: 24,
     backgroundColor: '#141414',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    overflow: 'hidden',
   },
   appName: {
-    fontSize: 36,
+    fontSize: 32,
     fontWeight: '800',
     color: '#FFFFFF',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   tagline: {
     fontSize: 16,
     color: '#999',
-    marginBottom: 20,
+  },
+  formShadow: {
+    borderRadius: 24,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.25,
+        shadowRadius: 10,
+      },
+      android: {
+        elevation: 6,
+      }
+    }),
   },
   formCard: {
     backgroundColor: '#141414',
     borderRadius: 24,
     padding: 24,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    overflow: 'hidden',
   },
   formTitle: {
     fontSize: 24,
@@ -468,12 +550,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 59, 48, 0.1)',
     padding: 12,
     borderRadius: 12,
-    marginBottom: 16,
+    marginBottom: 20,
   },
   errorText: {
     color: '#FF3B30',
-    fontSize: 14,
     marginLeft: 8,
+    fontSize: 14,
     flex: 1,
   },
   inputContainer: {
@@ -493,10 +575,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     paddingVertical: 14,
     paddingRight: 16,
-    // These styles fix the background color issue
     backgroundColor: 'transparent',
     outlineStyle: 'none', // For web platforms
-    outlineWidth: 0,       // For web platforms
+    outlineWidth: 0,      // For web platforms
   },
   primaryButton: {
     backgroundColor: '#3B82F6',
@@ -523,31 +604,42 @@ const styles = StyleSheet.create({
   },
   dividerText: {
     color: '#999',
-    paddingHorizontal: 12,
+    marginHorizontal: 16,
     fontSize: 14,
   },
   googleButton: {
-    borderColor: '#3B82F6',
     borderRadius: 12,
-    borderWidth: 1,
-    marginBottom: 20,
+    borderColor: '#3B82F6',
+    marginBottom: 16,
   },
   socialButtonLabel: {
     color: '#3B82F6',
     fontSize: 16,
     fontWeight: '600',
   },
+  comingSoonShadow: {
+    borderRadius: 12,
+    marginBottom: 20,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      }
+    }),
+  },
   comingSoonCard: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#1E1E1E',
     borderRadius: 12,
     padding: 12,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#333',
-    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
   },
   comingSoonText: {
     color: '#999',
@@ -567,10 +659,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
+  modalShadow: {
+    borderRadius: 24,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
+      },
+      android: {
+        elevation: 8,
+      }
+    }),
+  },
   modalCard: {
     backgroundColor: '#141414',
     borderRadius: 24,
     padding: 24,
+    overflow: 'hidden',
   },
   modalTitle: {
     fontSize: 24,

@@ -7,12 +7,13 @@ import {
   TouchableOpacity,
   Image,
   TextInput,
-  FlatList,
   Platform,
   ActivityIndicator,
   Animated,
   ScrollView,
-  Dimensions
+  Dimensions,
+  KeyboardAvoidingView,
+  FlatList
 } from 'react-native';
 import { Surface, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -23,6 +24,7 @@ import { useAuth } from '../context/AuthContext';
 import { collection, query, onSnapshot, addDoc, serverTimestamp, limit } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
 import { format, addDays } from 'date-fns';
+import * as FileSystem from 'expo-file-system';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 const { width, height } = Dimensions.get('window');
@@ -32,6 +34,20 @@ export default function HomeScreen() {
   const { user } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const dates = [-3, -2, -1, 0, 1, 2, 3].map(diff => addDays(new Date(), diff));
+  const [profileImage, setProfileImage] = useState(user?.photoURL || null);
+  const flatListRef = useRef(null);
+  
+  // Handle profile image safely on iOS
+  useEffect(() => {
+    if (user?.photoURL) {
+      if (Platform.OS === 'ios' && user.photoURL.startsWith('blob:')) {
+        // For iOS, if we encounter a blob URL, use default image instead
+        setProfileImage(null);
+      } else {
+        setProfileImage(user.photoURL);
+      }
+    }
+  }, [user?.photoURL]);
   
   // AI Chat state
   const [chatExpanded, setChatExpanded] = useState(false);
@@ -43,7 +59,6 @@ export default function HomeScreen() {
   }]);
   const [input, setInput] = useState('');
   const [waitingForResponse, setWaitingForResponse] = useState(false);
-  const flatListRef = useRef(null);
   
   // Animation values for collapsible chat
   const chatHeight = useRef(new Animated.Value(0)).current;
@@ -51,7 +66,7 @@ export default function HomeScreen() {
   // Listen for AI responses from Firestore
   useEffect(() => {
     if (!user?.uid) return;
-    
+  
     const q = query(collection(db, 'generate'), limit(50));
     
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
@@ -91,15 +106,16 @@ export default function HomeScreen() {
     
     return () => unsubscribe();
   }, [user?.uid]);
-  
-  // Scroll to bottom when messages change
+
+  // Scroll to bottom when messages change or chat expands
   useEffect(() => {
-    if (flatListRef.current && messages.length > 0) {
+    if (flatListRef.current && chatExpanded) {
+      // Wait briefly for layout before scrolling
       setTimeout(() => {
-        flatListRef.current.scrollToEnd({ animated: true });
-      }, 200);
+        flatListRef.current.scrollToEnd({ animated: false });
+      }, 100);
     }
-  }, [messages]);
+  }, [messages, chatExpanded]);
   
   // Send message to AI
   const sendMessage = async () => {
@@ -121,31 +137,21 @@ export default function HomeScreen() {
     setMessages(prev => [...prev, {
       id: `loading-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       role: 'assistant',
-      content: '...',
-      isLoading: true,
-      created_at: new Date()
+      content: '',
+      created_at: new Date(),
+      isLoading: true
     }]);
     
     try {
-      // Gemini API settings based on the provided configuration
-      const GEMINI_API_KEY = "AIzaSyD7BeSalRuBPHdH3HtHtIRiCl2YqKRyBmk";
-      
-      // Create a document in the 'generate' collection
+      // Send to Firestore for processing
       await addDoc(collection(db, 'generate'), {
-        prompt: userMessage,
         userId: user.uid,
-        createTime: serverTimestamp(),
-        apiKey: GEMINI_API_KEY,
-        model: "gemini-1.5-flash",
-        temperature: 0.2,
-        candidateCount: 1,
-        systemInstruction: "You are a fitness expert and personal trainer. Provide helpful advice on workouts, fitness routines, nutrition, and recovery strategies."
+        prompt: userMessage,
+        createdAt: serverTimestamp(),
       });
-      
-    } catch (error) {
-      console.error('Error sending message:', error);
-      
-      // Remove loading message and show error
+    } catch (e) {
+      console.error("Error sending message:", e);
+      // Show error message
       setMessages(prev => {
         const filtered = prev.filter(msg => !msg.isLoading);
         filtered.push({
@@ -176,7 +182,12 @@ export default function HomeScreen() {
         toValue: 340,
         duration: 300,
         useNativeDriver: false
-      }).start();
+      }).start(() => {
+        // Scroll to bottom once expanded
+        if (flatListRef.current) {
+          flatListRef.current.scrollToEnd({ animated: true });
+        }
+      });
     }
     setChatExpanded(!chatExpanded);
   };
@@ -229,8 +240,9 @@ export default function HomeScreen() {
           onPress={() => navigation.navigate('Profile')}
         >
           <Image
-            source={user?.photoURL ? { uri: user.photoURL } : defaultAvatar}
+            source={profileImage ? { uri: profileImage } : defaultAvatar}
             style={styles.profileImage}
+            defaultSource={defaultAvatar}
           />
         </TouchableOpacity>
       </View>
@@ -270,8 +282,8 @@ export default function HomeScreen() {
         </View>
         
         {/* AI Chat Card - Collapsible */}
-        <Surface style={styles.aiChatCard}>
-          <View style={{ overflow: 'hidden' }}>
+        <Surface style={styles.cardShadow}>
+          <View style={styles.aiChatCard}>
             <TouchableOpacity onPress={toggleChat} style={styles.aiChatHeader}>
               <View style={styles.aiTitleArea}>
                 <MaterialCommunityIcons name="robot" size={24} color="#3B82F6" />
@@ -288,46 +300,57 @@ export default function HomeScreen() {
               <FlatList
                 ref={flatListRef}
                 data={messages}
-                keyExtractor={item => item.id}
                 renderItem={({ item }) => <MessageBubble message={item} />}
-                style={styles.messageList}
-                contentContainerStyle={styles.messageListContent}
-                showsVerticalScrollIndicator={false}
+                keyExtractor={item => item.id}
+                contentContainerStyle={styles.messagesContainer}
+                showsVerticalScrollIndicator={true}
+                initialNumToRender={10}
+                onLayout={() => {
+                  if (flatListRef.current) {
+                    flatListRef.current.scrollToEnd({ animated: false });
+                  }
+                }}
               />
               
-              <View style={styles.inputContainer}>
-                <TextInput
-                  style={styles.input}
-                  value={input}
-                  onChangeText={setInput}
-                  placeholder="Ask about workouts, nutrition..."
-                  placeholderTextColor="#666666"
-                  multiline
-                  maxLength={500}
-                  editable={!waitingForResponse}
-                />
-                <TouchableOpacity 
-                  style={[
-                    styles.sendButton,
-                    (!input.trim() || waitingForResponse) && styles.sendButtonDisabled
-                  ]}
-                  onPress={sendMessage}
-                  disabled={!input.trim() || waitingForResponse}
-                >
-                  <MaterialCommunityIcons 
-                    name="send" 
-                    size={20} 
-                    color={input.trim() && !waitingForResponse ? "#FFFFFF" : "#666666"} 
+              <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+              >
+                <View style={styles.inputContainer}>
+                  <TextInput
+                    style={styles.input}
+                    value={input}
+                    onChangeText={setInput}
+                    placeholder="Ask about workouts, nutrition..."
+                    placeholderTextColor="#666666"
+                    multiline
+                    maxLength={500}
+                    editable={!waitingForResponse}
                   />
-                </TouchableOpacity>
-              </View>
+                  
+                  <TouchableOpacity 
+                    style={[
+                      styles.sendButton,
+                      (!input.trim() || waitingForResponse) && styles.sendButtonDisabled
+                    ]}
+                    onPress={sendMessage}
+                    disabled={!input.trim() || waitingForResponse}
+                  >
+                    <MaterialCommunityIcons 
+                      name="send" 
+                      size={20} 
+                      color={input.trim() && !waitingForResponse ? "#FFFFFF" : "#666666"} 
+                    />
+                  </TouchableOpacity>
+                </View>
+              </KeyboardAvoidingView>
             </Animated.View>
           </View>
         </Surface>
         
         {/* Steps API Coming Soon */}
-        <Surface style={styles.stepsCard}>
-          <View style={{ overflow: 'hidden' }}>
+        <Surface style={styles.cardShadow}>
+          <View style={styles.stepsCard}>
             <View style={styles.stepsHeader}>
               <View style={styles.stepsIconContainer}>
                 <MaterialCommunityIcons name="shoe-print" size={24} color="#3B82F6" />
@@ -361,7 +384,7 @@ export default function HomeScreen() {
   );
 }
 
-// Define styles AFTER the component where chatExpanded is defined
+// Define styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -451,13 +474,30 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   
-  // AI Chat Card
-  aiChatCard: {
-    backgroundColor: '#1A1A1A',
+  // Card shadow styles for iOS compatibility
+  cardShadow: {
     marginHorizontal: 20,
     marginBottom: 20,
     borderRadius: 20,
-    overflow: 'hidden',
+    // DO NOT add overflow: hidden here
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 10,
+      },
+      android: {
+        elevation: 4,
+      }
+    }),
+  },
+  
+  // AI Chat Card
+  aiChatCard: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 20,
+    overflow: 'hidden', // Move overflow to inner container
     borderWidth: 1,
     borderColor: '#2A2A2A',
   },
@@ -479,52 +519,11 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   chatContainer: {
-    height: 0, // Initially collapsed
-    overflow: 'hidden',
-    borderTopWidth: 1,
-    borderTopColor: '#2A2A2A',
+    // No overflow hidden here to allow for scrolling
   },
-  messageList: {
-    flex: 1,
+  messagesContainer: {
     padding: 16,
-  },
-  messageListContent: {
-    paddingBottom: 16,
-  },
-  messageBubble: {
-    marginBottom: 12,
-    padding: 12,
-    borderRadius: 16,
-    maxWidth: '80%',
-  },
-  userBubble: {
-    alignSelf: 'flex-end',
-    backgroundColor: '#3B82F6',
-    borderBottomRightRadius: 4,
-  },
-  assistantBubble: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#2A2A2A',
-    borderBottomLeftRadius: 4,
-  },
-  assistantHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  assistantName: {
-    color: '#FF3B30',
-    fontSize: 12,
-    fontWeight: '600',
-    marginLeft: 4,
-  },
-  userText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-  },
-  assistantText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+    paddingBottom: 8,
   },
   inputContainer: {
     flexDirection: 'row',
@@ -533,6 +532,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderTopWidth: 1,
     borderTopColor: '#2A2A2A',
+    backgroundColor: '#1A1A1A', // Added background color for visibility
   },
   input: {
     flex: 1,
@@ -543,6 +543,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
     color: '#FFFFFF',
     fontSize: 16,
+    maxHeight: 100, // Limit height for multiline input
   },
   sendButton: {
     width: 40,
@@ -556,13 +557,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#2A2A2A',
   },
   
-  // Steps API Card
+  // Steps tracker card
   stepsCard: {
     backgroundColor: '#1A1A1A',
-    marginHorizontal: 20,
-    marginBottom: 20,
     borderRadius: 20,
-    overflow: 'hidden',
+    overflow: 'hidden', // Move overflow to inner container
     borderWidth: 1,
     borderColor: '#2A2A2A',
     padding: 16,
@@ -600,36 +599,74 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   stepsMetric: {
-    flex: 0.4,
+    alignItems: 'center',
+    width: '30%',
   },
   stepsCount: {
     fontSize: 32,
-    fontWeight: '700',
+    fontWeight: 'bold',
     color: '#FFFFFF',
   },
   stepsLabel: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#999',
+    marginTop: 4,
   },
   stepsProgress: {
-    flex: 0.6,
-    paddingLeft: 16,
+    flex: 1,
+    marginLeft: 16,
   },
   stepsProgressBar: {
     height: 8,
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#333',
     borderRadius: 4,
-    marginBottom: 8,
     overflow: 'hidden',
+    marginBottom: 8,
   },
   stepsProgressFill: {
     height: '100%',
     backgroundColor: '#3B82F6',
-    borderRadius: 4,
   },
   stepsGoal: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#999',
     textAlign: 'right',
+  },
+  
+  // Message bubbles
+  messageBubble: {
+    marginBottom: 12,
+    padding: 12,
+    borderRadius: 16,
+    maxWidth: '80%',
+  },
+  userBubble: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#3B82F6',
+    borderBottomRightRadius: 4,
+  },
+  assistantBubble: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#2A2A2A',
+    borderBottomLeftRadius: 4,
+  },
+  assistantHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  assistantName: {
+    color: '#FF3B30',
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  userText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+  },
+  assistantText: {
+    color: '#FFFFFF',
+    fontSize: 16,
   },
 });

@@ -4,18 +4,19 @@ import {
   Text, 
   StyleSheet, 
   Image, 
-TouchableOpacity, 
-ScrollView, 
-FlatList, 
-ActivityIndicator, 
-Platform, 
-RefreshControl 
+  TouchableOpacity, 
+  ScrollView, 
+  ActivityIndicator, 
+  Platform, 
+  RefreshControl 
 } from 'react-native';
 import { Button, Divider, Card, IconButton, Surface } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
 import { getStats, getUserWorkouts } from '../data/firebaseHelpers';
 import { format } from 'date-fns';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../Firebase/firebaseConfig';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 
@@ -29,15 +30,33 @@ const ProfileScreen = ({ navigation, route }) => {
   const [totalWeight, setTotalWeight] = useState(0);
   const [badges, setBadges] = useState([]);
   const [imageKey, setImageKey] = useState(Date.now());
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // Load data on initial mount when user exists
   useEffect(() => {
     if (user?.uid) {
       loadUserData();
+      checkAdminStatus();
     } else {
       setLoading(false);
     }
   }, [user]);
+
+  // Check admin status directly from Firestore
+  const checkAdminStatus = useCallback(async () => {
+    if (!user?.uid) return;
+    
+    try {
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        setIsAdmin(userData.isAdmin === true);
+        console.log("Admin status:", userData.isAdmin === true ? "Admin" : "Not admin");
+      }
+    } catch (error) {
+      console.error("Error checking admin status:", error);
+    }
+  }, [user?.uid]);
 
   // Handle navigation focus events (coming back from EditProfileScreen)
   useEffect(() => {
@@ -46,13 +65,14 @@ const ProfileScreen = ({ navigation, route }) => {
         if (user?.uid) {
           setImageKey(Date.now());
           loadUserData();
+          checkAdminStatus();
         }
         navigation.setParams({ refresh: undefined, forceRefresh: undefined });
       }
     });
     
     return unsubscribe;
-  }, [navigation, route.params]);
+  }, [navigation, route.params, user]);
 
   // Define loadUserData as a useCallback to avoid recreation on each render
   const loadUserData = useCallback(async () => {
@@ -60,6 +80,7 @@ const ProfileScreen = ({ navigation, route }) => {
     
     try {
       setLoading(true);
+      
       const [userStats, userWorkouts] = await Promise.all([
         getStats(user.uid),
         getUserWorkouts(user.uid)
@@ -119,11 +140,22 @@ const ProfileScreen = ({ navigation, route }) => {
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
     loadUserData();
-  }, [loadUserData]);
+    checkAdminStatus();
+  }, [loadUserData, checkAdminStatus]);
 
   // Handler function for edit profile button
   const handleEditProfile = useCallback(() => {
     navigation.navigate('EditProfile', { fromProfile: true });
+  }, [navigation]);
+  
+  // Navigate to admin dashboard
+  const navigateToAdmin = useCallback(() => {
+    navigation.navigate('AdminDashboard');
+  }, [navigation]);
+
+  // Navigate to workout history
+  const navigateToWorkoutHistory = useCallback(() => {
+    navigation.navigate('WorkoutHistory');
   }, [navigation]);
 
   if (loading && !refreshing) {
@@ -133,6 +165,52 @@ const ProfileScreen = ({ navigation, route }) => {
       </View>
     );
   }
+
+  // Render a workout item
+  const renderWorkoutItem = (item, index) => (
+    <TouchableOpacity 
+      style={styles.workoutItem}
+      key={item.id || index}
+      onPress={() => navigation.navigate('WorkoutDetail', { workoutId: item.id })}
+    >
+      <View style={styles.workoutHeader}>
+        <MaterialCommunityIcons name="calendar" size={16} color="#999" />
+        <Text style={styles.workoutDate}>{formatDate(item.date)}</Text>
+      </View>
+      
+      <View style={styles.workoutDetails}>
+        <View style={styles.workoutStatsRow}>
+          <View style={styles.workoutStat}>
+            <MaterialCommunityIcons name="timer-outline" size={16} color="#3B82F6" />
+            <Text style={styles.workoutStatText}>
+              {formatDuration(item.duration)}
+            </Text>
+          </View>
+          
+          <View style={styles.workoutStat}>
+            <MaterialCommunityIcons name="dumbbell" size={16} color="#3B82F6" />
+            <Text style={styles.workoutStatText}>
+              {item.exercises.length} exercises
+            </Text>
+          </View>
+        </View>
+        
+        {item.exercises.slice(0, 2).map((exercise, exIndex) => (
+          <Text key={`${item.id}-ex-${exIndex}`} style={styles.exerciseItem}>
+            • {exercise.name}: {exercise.sets}×{exercise.reps} @ {exercise.weight}lbs
+          </Text>
+        ))}
+        
+        {item.exercises.length > 2 && (
+          <Text style={styles.moreExercises}>
+            +{item.exercises.length - 2} more exercises
+          </Text>
+        )}
+      </View>
+      
+      <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+    </TouchableOpacity>
+  );
 
   return (
     <ScrollView 
@@ -150,8 +228,8 @@ const ProfileScreen = ({ navigation, route }) => {
       {error && <Text style={styles.errorText}>{error}</Text>}
       
       {/* Profile Header */}
-      <Surface style={styles.headerCard}>
-        <View style={{ overflow: 'hidden' }}>
+      <Surface style={styles.shadowCard}>
+        <View style={styles.headerCard}>
           <View style={styles.header}>
             <TouchableOpacity 
               style={styles.avatarContainer}
@@ -187,26 +265,24 @@ const ProfileScreen = ({ navigation, route }) => {
 
       {/* Stats Cards */}
       <View style={styles.statsContainer}>
-        <Surface style={styles.statCard}>
-          <View style={{ overflow: 'hidden' }}>
+        <Surface style={styles.shadowCard}>
+          <View style={styles.statCard}>
             <MaterialCommunityIcons name="dumbbell" size={28} color="#3B82F6" />
             <Text style={styles.statNumber}>{workouts.length}</Text>
             <Text style={styles.statLabel}>Workouts</Text>
           </View>
         </Surface>
         
-        <Surface style={styles.statCard}>
-          <View style={{ overflow: 'hidden' }}>
-            <MaterialCommunityIcons name="weight-lifter" size={28} color="#3B82F6" />
-            <Text style={styles.statNumber}>
-              {totalWeight.toLocaleString()}
-            </Text>
-            <Text style={styles.statLabel}>Total lbs</Text>
+        <Surface style={styles.shadowCard}>
+          <View style={styles.statCard}>
+            <MaterialCommunityIcons name="weight" size={28} color="#3B82F6" />
+            <Text style={styles.statNumber}>{Math.floor(totalWeight).toLocaleString()}</Text>
+            <Text style={styles.statLabel}>Total Weight</Text>
           </View>
         </Surface>
         
-        <Surface style={styles.statCard}>
-          <View style={{ overflow: 'hidden' }}>
+        <Surface style={styles.shadowCard}>
+          <View style={styles.statCard}>
             <MaterialCommunityIcons name="trophy" size={28} color="#3B82F6" />
             <Text style={styles.statNumber}>{badges.length}</Text>
             <Text style={styles.statLabel}>Badges</Text>
@@ -214,114 +290,45 @@ const ProfileScreen = ({ navigation, route }) => {
         </Surface>
       </View>
 
-      {/* Measurements Section (if available) */}
-      {stats && stats.measurements && (
-        <Surface style={styles.sectionCard}>
-          <View style={{ overflow: 'hidden' }}>
-            <Text style={styles.sectionTitle}>Body Measurements</Text>
-            <View style={styles.measurementsGrid}>
-              <View style={styles.measurementBox}>
-                <Text style={styles.measurementValue}>
-                  {stats.measurements.weight || '--'}
-                </Text>
-                <Text style={styles.measurementLabel}>Weight (lbs)</Text>
-              </View>
-              <View style={styles.measurementBox}>
-                <Text style={styles.measurementValue}>
-                  {stats.measurements.chest || '--'}"
-                </Text>
-                <Text style={styles.measurementLabel}>Chest</Text>
-              </View>
-              <View style={styles.measurementBox}>
-                <Text style={styles.measurementValue}>
-                  {stats.measurements.waist || '--'}"
-                </Text>
-                <Text style={styles.measurementLabel}>Waist</Text>
-              </View>
-              <View style={styles.measurementBox}>
-                <Text style={styles.measurementValue}>
-                  {stats.measurements.arms || '--'}"
-                </Text>
-                <Text style={styles.measurementLabel}>Arms</Text>
-              </View>
-            </View>
-          </View>
-        </Surface>
-      )}
-
       {/* Recent Workouts Section */}
-      <Surface style={styles.sectionCard}>
-        <View style={{ overflow: 'hidden' }}>
+      <Surface style={styles.shadowCard}>
+        <View style={styles.sectionCard}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Recent Workouts</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Workout')}>
+            <TouchableOpacity onPress={navigateToWorkoutHistory}>
               <Text style={styles.seeAllText}>See All</Text>
             </TouchableOpacity>
           </View>
-
+          
           {workouts.length === 0 ? (
-            <View style={styles.emptyWorkouts}>
-              <MaterialCommunityIcons name="dumbbell" size={48} color="#666" />
-              <Text style={styles.emptyText}>No workouts yet</Text>
+            <View style={styles.emptyState}>
+              <MaterialCommunityIcons name="dumbbell" size={40} color="#666" />
+              <Text style={styles.emptyStateText}>No workouts yet</Text>
               <Button 
                 mode="contained" 
                 onPress={() => navigation.navigate('Workout')}
-                style={styles.startWorkoutButton}
+                style={styles.actionButton}
               >
                 Start a Workout
               </Button>
             </View>
           ) : (
-            <FlatList
-              data={workouts.slice(0, 3)} // Show only the 3 most recent workouts
-              keyExtractor={(item) => item.id}
-              scrollEnabled={false} // Prevent nested scrolling
-              renderItem={({ item }) => (
-                <Surface style={styles.workoutCard}>
-                  <View style={styles.workoutCardContent}>
-                    <View style={styles.workoutHeader}>
-                      <View>
-                        <Text style={styles.workoutDate}>{formatDate(item.date)}</Text>
-                        <Text style={styles.workoutDuration}>
-                          {formatDuration(item.duration)} • {item.exercises.length} exercises
-                        </Text>
-                      </View>
-                      <IconButton 
-                        icon="chevron-right" 
-                        size={24}
-                        onPress={() => navigation.navigate('Workout')}
-                        color="#3B82F6"
-                      />
-                    </View>
-                    
-                    <View style={styles.exercisesList}>
-                      {item.exercises.slice(0, 2).map((exercise, index) => (
-                        <Text key={index} style={styles.exerciseItem}>
-                          • {exercise.name}: {exercise.sets} × {exercise.reps} @ {exercise.weight} lbs
-                        </Text>
-                      ))}
-                      {item.exercises.length > 2 && (
-                        <Text style={styles.moreExercises}>
-                          +{item.exercises.length - 2} more exercises
-                        </Text>
-                      )}
-                    </View>
-                  </View>
-                </Surface>
-              )}
-            />
+            // Manually render workout items instead of using FlatList
+            <View>
+              {workouts.slice(0, 3).map((workout, index) => renderWorkoutItem(workout, index))}
+            </View>
           )}
         </View>
       </Surface>
 
       {/* Settings Section */}
-      <Surface style={styles.sectionCard}>
-        <View style={{ overflow: 'hidden' }}>
+      <Surface style={styles.shadowCard}>
+        <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Settings</Text>
           
           <TouchableOpacity 
             style={styles.option}
-            onPress={() => navigation.navigate('EditProfile')}
+            onPress={handleEditProfile}
           >
             <View style={styles.optionContent}>
               <MaterialCommunityIcons name="account-edit" size={24} color="#3B82F6" />
@@ -329,6 +336,20 @@ const ProfileScreen = ({ navigation, route }) => {
             </View>
             <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
           </TouchableOpacity>
+          
+          {/* Admin Dashboard Button - Only shown if user is admin */}
+          {isAdmin && (
+            <TouchableOpacity 
+              style={styles.option}
+              onPress={navigateToAdmin}
+            >
+              <View style={styles.optionContent}>
+                <MaterialCommunityIcons name="shield-account" size={24} color="#3B82F6" />
+                <Text style={styles.optionText}>Admin Dashboard</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+            </TouchableOpacity>
+          )}
           
           <TouchableOpacity 
             style={styles.option}
@@ -346,13 +367,15 @@ const ProfileScreen = ({ navigation, route }) => {
   );
 };
 
-// Add badge calculation helper
+// Add badge calculation helper function
 function calculateBadges(totalWeight) {
   const badges = [];
   
-  if (totalWeight >= 1000) badges.push({ id: 'weight-1000', name: '1,000 lbs Club' });
-  if (totalWeight >= 10000) badges.push({ id: 'weight-10000', name: '10,000 lbs Club' });
-  if (totalWeight >= 100000) badges.push({ id: 'weight-100000', name: '100,000 lbs Club' });
+  // Simple badge logic based on total weight lifted
+  if (totalWeight >= 1000) badges.push({ id: '1k', name: '1K Club' });
+  if (totalWeight >= 10000) badges.push({ id: '10k', name: '10K Club' });
+  if (totalWeight >= 50000) badges.push({ id: '50k', name: '50K Club' });
+  if (totalWeight >= 100000) badges.push({ id: '100k', name: '100K Club' });
   
   return badges;
 }
@@ -366,12 +389,31 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 32,
   },
+  errorText: {
+    color: '#FF3B30',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#0A0A0A',
+  },
+  
+  // Shadow card for iOS compatibility
+  shadowCard: {
+    borderRadius: 16,
+    marginBottom: 16,
+    // Remove overflow here to fix the shadow issue
+  },
+  
   // Profile header
   headerCard: {
     backgroundColor: '#141414',
     borderRadius: 16,
     padding: 16,
-    marginBottom: 16,
+    // Content inside Surface wrapped in View
   },
   header: {
     flexDirection: 'row',
@@ -398,8 +440,6 @@ const styles = StyleSheet.create({
     height: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#141414',
   },
   userInfo: {
     flex: 1,
@@ -453,6 +493,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#141414',
     borderRadius: 16,
     padding: 16,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 16,
   },
   sectionTitle: {
@@ -461,129 +506,90 @@ const styles = StyleSheet.create({
     color: '#FFF',
     marginBottom: 16,
   },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
   seeAllText: {
     color: '#3B82F6',
-    fontSize: 16,
-  },
-  
-  // Measurements section
-  measurementsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  measurementBox: {
-    width: '48%',
-    backgroundColor: '#1A1A1A',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  measurementValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFF',
-  },
-  measurementLabel: {
     fontSize: 14,
-    color: '#999',
-    marginTop: 6,
+    fontWeight: '500',
   },
   
-  // Workouts section
-  workoutCard: {
+  // Workout list
+  emptyState: {
+    alignItems: 'center',
+    padding: 24,
+  },
+  emptyStateText: {
+    color: '#999',
+    fontSize: 16,
+    marginVertical: 12,
+  },
+  actionButton: {
+    backgroundColor: '#3B82F6',
+    marginTop: 16,
+    borderRadius: 8,
+  },
+  workoutItem: {
     backgroundColor: '#1A1A1A',
     borderRadius: 12,
-    marginBottom: 12,
-    overflow: 'hidden',
-  },
-  workoutCardContent: {
     padding: 16,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   workoutHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 8,
   },
   workoutDate: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFF',
-  },
-  workoutDuration: {
     fontSize: 14,
     color: '#999',
-    marginTop: 4,
+    marginLeft: 6,
   },
-  exercisesList: {
-    marginTop: 12,
+  workoutDetails: {
+    flex: 1,
+  },
+  workoutStatsRow: {
+    flexDirection: 'row',
+    marginBottom: 10,
+  },
+  workoutStat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  workoutStatText: {
+    color: '#CCC',
+    fontSize: 14,
+    marginLeft: 4,
   },
   exerciseItem: {
+    color: '#DDD',
     fontSize: 14,
-    color: '#CCC',
     marginBottom: 4,
-    paddingLeft: 8,
-    borderLeftWidth: 2,
-    borderLeftColor: '#3B82F6',
   },
   moreExercises: {
-    fontSize: 14,
     color: '#999',
+    fontSize: 12,
     fontStyle: 'italic',
-    marginTop: 6,
-  },
-  emptyWorkouts: {
-    padding: 24,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 16,
-    color: '#999',
-    marginVertical: 12,
-  },
-  startWorkoutButton: {
-    backgroundColor: '#3B82F6',
-    borderRadius: 12,
-    marginTop: 8,
+    marginTop: 4,
   },
   
-  // Settings section
+  // Options
   option: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
   },
   optionContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
   },
   optionText: {
+    marginLeft: 12,
     fontSize: 16,
     color: '#FFF',
-  },
-  
-  // General
-  errorText: {
-    color: '#FF3B30',
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#0A0A0A',
+    fontWeight: '500',
   },
 });
 

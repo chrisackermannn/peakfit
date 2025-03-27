@@ -11,6 +11,7 @@ import PrivacySettingsScreen from './screens/Profile/PrivacySettingsScreen';
 import Welcome from './screens/Welcome';
 import { PaperProvider } from 'react-native-paper';
 import FlashMessage from "react-native-flash-message";
+import AdminScreen from './screens/AdminScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -77,6 +78,17 @@ function AppNavigator() {
         name="PrivacySettings" 
         component={PrivacySettingsScreen} 
         options={{ title: 'Privacy Settings' }} 
+      />
+      <Stack.Screen 
+        name="AdminDashboard" 
+        component={AdminScreen} 
+        options={{ 
+          title: 'Admin Dashboard',
+          headerStyle: {
+            backgroundColor: '#3B82F6',
+          },
+          headerTintColor: '#fff',
+        }} 
       />
     </Stack.Navigator>
   );
