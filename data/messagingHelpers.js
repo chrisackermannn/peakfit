@@ -14,7 +14,8 @@ import {
   increment,
   arrayUnion,
   onSnapshot,
-  runTransaction
+  runTransaction,
+  deleteDoc // Make sure this is included
 } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
 

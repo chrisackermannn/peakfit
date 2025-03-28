@@ -23,6 +23,7 @@ import {
   orderBy,
   serverTimestamp,
   onSnapshot,
+  deleteDoc,
 } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
 import { 
@@ -43,38 +44,39 @@ export default function ChatConversationScreen({ route, navigation }) {
   const [error, setError] = useState(null);
   const flatListRef = useRef(null);
   
-  // Track whether we've already initialized the messages
-  const initialized = useRef(false);
+  // Track processed messages to prevent duplicates
+  const processedMessageIds = useRef({});
   
-  // Mark conversation as read when opening the chat
+  // Only create message listener once
+  const messageListener = useRef(null);
+  
+  // Mark conversation as read when opening
   useEffect(() => {
-    if (!user?.uid || !conversationId) return;
+    if (user?.uid && conversationId) {
+      markConversationAsRead(conversationId, user.uid)
+        .catch(err => console.error("Error marking as read:", err));
+    }
     
-    const markAsRead = async () => {
-      try {
-        await markConversationAsRead(conversationId, user.uid);
-      } catch (error) {
-        console.log("Error marking conversation as read:", error);
+    return () => {
+      // Clean up listener on unmount
+      if (messageListener.current) {
+        messageListener.current();
+        messageListener.current = null;
       }
     };
-    
-    markAsRead();
-  }, [conversationId, user?.uid]);
-
-  // Load messages only once on initial mount
+  }, []);
+  
+  // Set up message listener only once
   useEffect(() => {
-    if (!user?.uid || !conversationId || !otherUser?.id || initialized.current) return;
+    if (!user?.uid || !conversationId || !otherUser?.id || messageListener.current) {
+      return;
+    }
     
-    initialized.current = true;
     setLoading(true);
-    setMessages([]);
     
-    // Create a message tracker to avoid duplicates
-    const processedMessages = new Map();
-    
-    // Listen for messages
-    const unsubscribe = listenToMessages(
-      user.uid, 
+    // Set up the message listener
+    messageListener.current = listenToMessages(
+      user.uid,
       conversationId,
       (newMessages) => {
         if (newMessages.length === 0) {
@@ -82,64 +84,60 @@ export default function ChatConversationScreen({ route, navigation }) {
           return;
         }
         
-        // Update the message state using functional update to ensure we have the latest data
+        // Update message state avoiding duplicates
         setMessages(prevMessages => {
-          // Create a new array for the final messages
-          let updatedMessages = [...prevMessages];
-          let hasChanges = false;
-          
-          // First, create a lookup map of all existing messages by ID
-          const existingMessageMap = new Map();
+          // Map of existing messages for quick lookups
+          const existingMessagesMap = {};
           prevMessages.forEach(msg => {
-            existingMessageMap.set(msg.id, msg);
+            existingMessagesMap[msg.id] = true;
           });
           
-          // Process new messages from Firestore
+          let hasChanges = false;
+          const processedMessages = [...prevMessages];
+          
+          // Filter and process only new messages
           newMessages.forEach(newMsg => {
-            // Skip if we've already seen this exact message before
-            if (processedMessages.has(newMsg.id)) return;
-            
-            // Mark this message as processed
-            processedMessages.set(newMsg.id, true);
-            
-            // Check if this message already exists in our state
-            if (!existingMessageMap.has(newMsg.id)) {
-              // Check if this is a server-confirmed version of a local message
-              const localMsgIndex = updatedMessages.findIndex(msg => 
-                msg.id.startsWith('local-') && 
-                msg.text === newMsg.text && 
-                msg.senderId === newMsg.senderId
-              );
-              
-              if (localMsgIndex !== -1) {
-                // Replace the local message with the server version
-                updatedMessages.splice(localMsgIndex, 1);
-              }
-              
-              // Add the new message
-              updatedMessages.push(newMsg);
-              hasChanges = true;
+            // Skip if already processed or a duplicate
+            if (processedMessageIds.current[newMsg.id] || existingMessagesMap[newMsg.id]) {
+              return;
             }
+            
+            // Mark this message ID as processed
+            processedMessageIds.current[newMsg.id] = true;
+            
+            // Check if this replaces a local temporary message
+            const localMsgIndex = processedMessages.findIndex(msg => 
+              msg.id.startsWith('local-') && 
+              msg.text === newMsg.text && 
+              msg.senderId === newMsg.senderId
+            );
+            
+            if (localMsgIndex !== -1) {
+              // Replace the temporary local message
+              processedMessages.splice(localMsgIndex, 1);
+            }
+            
+            // Add the new server-confirmed message
+            processedMessages.push(newMsg);
+            hasChanges = true;
           });
           
+          // If nothing changed, keep current state
           if (!hasChanges) {
-            return prevMessages; // No changes needed
+            return prevMessages;
           }
           
-          // Sort messages by timestamp
-          return updatedMessages.sort((a, b) => {
-            const timeA = a.createdAt instanceof Date ? a.createdAt.getTime() : 0;
-            const timeB = b.createdAt instanceof Date ? b.createdAt.getTime() : 0;
+          // Sort by timestamp
+          return processedMessages.sort((a, b) => {
+            const timeA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
+            const timeB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
             return timeA - timeB;
           });
         });
         
         setLoading(false);
         
-        // Mark as read when new messages arrive
-        markConversationAsRead(conversationId, user.uid).catch(() => {});
-        
-        // Scroll to bottom when new messages arrive
+        // Scroll to bottom after message update
         setTimeout(() => {
           if (flatListRef.current) {
             flatListRef.current.scrollToEnd({ animated: false });
@@ -149,38 +147,43 @@ export default function ChatConversationScreen({ route, navigation }) {
     );
     
     return () => {
-      unsubscribe();
+      if (messageListener.current) {
+        messageListener.current();
+        messageListener.current = null;
+      }
     };
-  }, [conversationId, user?.uid, otherUser?.id]);
+  }, [user?.uid, conversationId, otherUser?.id]);
   
   // Send a new message
   const handleSend = async () => {
-    if (!text.trim() || !user?.uid || !otherUser?.id || sending) return;
+    if (!text.trim() || !user?.uid || !otherUser?.id || sending) {
+      return;
+    }
     
     try {
       setSending(true);
       const messageText = text.trim();
       setText('');
       
-      // Create a unique local ID that won't conflict with Firestore IDs
-      const timestamp = Date.now();
-      const localMessageId = `local-${timestamp}-${Math.floor(Math.random() * 1000000)}`;
+      // Generate a unique temporary ID
+      const localId = `local-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
       
-      // Add message to local state immediately for UI feedback
+      // Add temporary message to local state
       const localMessage = {
-        id: localMessageId,
+        id: localId,
         text: messageText,
         senderId: user.uid,
         createdAt: new Date()
       };
       
-      // Update local state with the new message
+      // Mark as processed to prevent duplication
+      processedMessageIds.current[localId] = true;
       setMessages(prevMessages => [...prevMessages, localMessage]);
       
       // Send to Firebase
       await sendMessage(conversationId, user.uid, otherUser.id, messageText);
       
-      // Scroll to bottom after sending
+      // Scroll to bottom
       setTimeout(() => {
         if (flatListRef.current) {
           flatListRef.current.scrollToEnd({ animated: true });
@@ -188,9 +191,7 @@ export default function ChatConversationScreen({ route, navigation }) {
       }, 100);
     } catch (err) {
       console.error('Error sending message:', err);
-      setError('Failed to send message. Please try again.');
-      
-      // Clear error after 3 seconds
+      setError('Failed to send message');
       setTimeout(() => setError(null), 3000);
     } finally {
       setSending(false);
@@ -201,14 +202,13 @@ export default function ChatConversationScreen({ route, navigation }) {
   const formatTime = (timestamp) => {
     if (!timestamp) return '';
     
-    // Make sure we have a valid Date object
     const date = timestamp instanceof Date ? timestamp : 
-                (typeof timestamp.toDate === 'function' ? timestamp.toDate() : new Date(timestamp));
+               (typeof timestamp.toDate === 'function' ? timestamp.toDate() : new Date(timestamp));
     
     return format(date, 'h:mm a');
   };
   
-  // Render an individual message
+  // Render a single message
   const renderMessage = ({ item }) => {
     const isCurrentUser = item.senderId === user?.uid;
     
@@ -236,12 +236,11 @@ export default function ChatConversationScreen({ route, navigation }) {
     );
   };
   
-  // Handle back button
+  // Go back
   const handleBack = () => {
     navigation.goBack();
   };
   
-  // Show loading indicator when initializing
   if (loading && messages.length === 0) {
     return (
       <View style={styles.loadingContainer}>
@@ -302,7 +301,6 @@ export default function ChatConversationScreen({ route, navigation }) {
               flatListRef.current.scrollToEnd({ animated: false });
             }
           }}
-          removeClippedSubviews={false}
         />
       )}
       
