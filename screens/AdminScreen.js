@@ -139,7 +139,11 @@ export default function AdminScreen({ navigation }) {
       setModalVisible(false);
     } catch (error) {
       console.error('Error updating admin status:', error);
-      Alert.alert('Error', 'Failed to update admin status.');
+      if (error.code === 'permission-denied') {
+        Alert.alert('Error', 'You do not have permission to perform this action.');
+      } else {
+        Alert.alert('Error', 'Failed to update admin status.');
+      }
     }
   };
   

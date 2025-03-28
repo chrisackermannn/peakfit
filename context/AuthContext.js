@@ -8,6 +8,7 @@ import React, { createContext, useState, useContext, useEffect } from 'react';
 import { auth, db } from '../Firebase/firebaseConfig'; // Import your Firebase auth instance
 import { onAuthStateChanged, updateProfile } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
+import { disconnectUser } from '../utils/streamChat';
 
 const AuthContext = createContext(null);
 
@@ -83,11 +84,25 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const logout = async () => {
+    try {
+      // Disconnect from Stream Chat before signing out
+      await disconnectUser();
+      
+      // Then proceed with the existing logout logic
+      await auth.signOut();
+      // ...rest of your logout logic
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
+  };
+
   const value = {
     user,
     loading,
     updateUserProfile,
     checkAdminStatus,
+    logout,
     // ...other existing values
   };
 

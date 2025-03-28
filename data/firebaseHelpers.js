@@ -401,3 +401,106 @@ export async function deleteTemplate(userId, templateId) {
     throw error;
   }
 }
+
+/**
+ * ========================================
+ * =           FRIENDS LOGIC            =
+ * ========================================
+ */
+
+/**
+ * Get user's friends with their data
+ */
+export async function getUserFriends(userId) {
+  try {
+    if (!userId) throw new Error('User ID is required');
+    
+    // First, get the user document with friends array
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    if (!userDoc.exists()) throw new Error('User not found');
+    
+    const userData = userDoc.data();
+    const friendIds = userData.friends || [];
+    
+    // If no friends, return empty array
+    if (friendIds.length === 0) return [];
+    
+    // Get each friend's data
+    const friendsPromises = friendIds.map(friendId => 
+      getDoc(doc(db, 'users', friendId))
+    );
+    
+    const friendDocs = await Promise.all(friendsPromises);
+    
+    // Map to array of friend data objects
+    const friendsData = friendDocs
+      .filter(doc => doc.exists()) // Only include existing docs
+      .map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        // Sanitize data (don't include sensitive fields)
+        email: undefined
+      }));
+    
+    return friendsData;
+  } catch (error) {
+    console.error('Error getting user friends:', error);
+    throw error;
+  }
+}
+
+/**
+ * Enhanced search users function that includes username similarity
+ * Only returns users that exist in the database
+ */
+export async function searchUsers(searchQuery) {
+  try {
+    if (!searchQuery || searchQuery.trim().length < 2) {
+      throw new Error('Search query must be at least 2 characters');
+    }
+    
+    // Search case insensitive
+    const queryText = searchQuery.toLowerCase();
+    
+    // Search by username prefix - this only returns existing users in Firebase
+    const exactRef = query(
+      collection(db, 'users'),
+      where('username', '>=', queryText),
+      where('username', '<=', queryText + '\uf8ff'), // Unicode range trick for prefix search
+      limit(10)
+    );
+    
+    const snapshot = await getDocs(exactRef);
+    
+    // This will only include users that actually exist in the database
+    // because Firestore's query only returns documents that match the criteria
+    const results = snapshot.docs
+      .filter(doc => doc.exists()) // Extra safety check to ensure document exists
+      .map(doc => {
+        const data = doc.data();
+        
+        // Only return if they have required fields
+        if (!data.username) {
+          return null;
+        }
+        
+        return {
+          id: doc.id,
+          username: data.username,
+          displayName: data.displayName || data.username,
+          photoURL: data.photoURL || null,
+          bio: data.bio || null,
+          // Explicitly exclude sensitive fields
+          email: undefined,
+          phoneNumber: undefined,
+          password: undefined
+        };
+      })
+      .filter(Boolean); // Remove any null entries
+    
+    return results;
+  } catch (error) {
+    console.error('Error searching users:', error);
+    throw error;
+  }
+}

@@ -13,7 +13,8 @@ import {
   ScrollView,
   Dimensions,
   KeyboardAvoidingView,
-  FlatList
+  FlatList,
+  Modal
 } from 'react-native';
 import { Surface, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -21,10 +22,11 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
-import { collection, query, onSnapshot, addDoc, serverTimestamp, limit } from 'firebase/firestore';
+import { collection, query, onSnapshot, addDoc, serverTimestamp, limit, where, getDocs } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
 import { format, addDays } from 'date-fns';
 import * as FileSystem from 'expo-file-system';
+import { searchUsers } from '../data/firebaseHelpers';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 const { width, height } = Dimensions.get('window');
@@ -36,7 +38,13 @@ export default function HomeScreen() {
   const dates = [-3, -2, -1, 0, 1, 2, 3].map(diff => addDays(new Date(), diff));
   const [profileImage, setProfileImage] = useState(user?.photoURL || null);
   const flatListRef = useRef(null);
-  
+
+  // Search state
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+
   // Handle profile image safely on iOS
   useEffect(() => {
     if (user?.photoURL) {
@@ -48,7 +56,7 @@ export default function HomeScreen() {
       }
     }
   }, [user?.photoURL]);
-  
+
   // AI Chat state
   const [chatExpanded, setChatExpanded] = useState(false);
   const [messages, setMessages] = useState([{
@@ -59,21 +67,24 @@ export default function HomeScreen() {
   }]);
   const [input, setInput] = useState('');
   const [waitingForResponse, setWaitingForResponse] = useState(false);
-  
+
   // Animation values for collapsible chat
   const chatHeight = useRef(new Animated.Value(0)).current;
-  
+
+  // Unread messages state
+  const [unreadMessages, setUnreadMessages] = useState(0);
+
   // Listen for AI responses from Firestore
   useEffect(() => {
     if (!user?.uid) return;
-  
+
     const q = query(collection(db, 'generate'), limit(50));
-    
+
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       querySnapshot.docChanges().forEach((change) => {
         if (change.type === 'added' || change.type === 'modified') {
           const data = change.doc.data();
-          
+
           // Only process responses for the current user
           if (data.userId === user.uid && data.response && data.status?.state === "COMPLETED") {
             // Update messages state to include the AI response
@@ -82,10 +93,10 @@ export default function HomeScreen() {
               const isDuplicate = prev.some(
                 msg => msg.role === 'assistant' && msg.content === data.response
               );
-              
+
               if (!isDuplicate) {
                 setWaitingForResponse(false);
-                
+
                 return [
                   ...prev.filter(msg => !msg.isLoading), // Remove loading indicators
                   {
@@ -96,14 +107,56 @@ export default function HomeScreen() {
                   }
                 ];
               }
-              
+
               return prev;
             });
           }
         }
       });
     });
-    
+
+    return () => unsubscribe();
+  }, [user?.uid]);
+
+  // Check for unread messages
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    // Function to check for unread messages
+    const checkUnreadMessages = async () => {
+      try {
+        const q = query(
+          collection(db, 'users', user.uid, 'chats'),
+          where('unreadCount', '>', 0)
+        );
+
+        const snapshot = await getDocs(q);
+
+        // Calculate total unread messages across all conversations
+        let totalUnread = 0;
+        snapshot.forEach(doc => {
+          totalUnread += doc.data().unreadCount || 0;
+        });
+
+        setUnreadMessages(totalUnread);
+      } catch (error) {
+        console.error("Error checking unread messages:", error);
+      }
+    };
+
+    // Initial check
+    checkUnreadMessages();
+
+    // Set up listener for real-time updates
+    const chatsRef = collection(db, 'users', user.uid, 'chats');
+    const unsubscribe = onSnapshot(chatsRef, (snapshot) => {
+      let total = 0;
+      snapshot.forEach(doc => {
+        total += doc.data().unreadCount || 0;
+      });
+      setUnreadMessages(total);
+    });
+
     return () => unsubscribe();
   }, [user?.uid]);
 
@@ -116,15 +169,15 @@ export default function HomeScreen() {
       }, 100);
     }
   }, [messages, chatExpanded]);
-  
+
   // Send message to AI
   const sendMessage = async () => {
     if (!input.trim() || !user?.uid || waitingForResponse) return;
-    
+
     const userMessage = input.trim();
     setInput('');
     setWaitingForResponse(true);
-    
+
     // Add user message to chat
     setMessages(prev => [...prev, {
       id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -132,7 +185,7 @@ export default function HomeScreen() {
       content: userMessage,
       created_at: new Date()
     }]);
-    
+
     // Add loading message
     setMessages(prev => [...prev, {
       id: `loading-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -141,7 +194,7 @@ export default function HomeScreen() {
       created_at: new Date(),
       isLoading: true
     }]);
-    
+
     try {
       // Send to Firestore for processing
       await addDoc(collection(db, 'generate'), {
@@ -162,11 +215,11 @@ export default function HomeScreen() {
         });
         return filtered;
       });
-      
+
       setWaitingForResponse(false);
     }
   };
-  
+
   // Toggle chat expansion
   const toggleChat = () => {
     if (chatExpanded) {
@@ -191,11 +244,26 @@ export default function HomeScreen() {
     }
     setChatExpanded(!chatExpanded);
   };
-  
+
+  // Search function
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+
+    try {
+      setSearching(true);
+      const results = await searchUsers(searchQuery.trim());
+      setSearchResults(results);
+    } catch (error) {
+      console.error('Error searching users:', error);
+    } finally {
+      setSearching(false);
+    }
+  };
+
   // Message bubble component
   const MessageBubble = ({ message }) => {
     const isUser = message.role === 'user';
-    
+
     if (message.isLoading) {
       return (
         <View style={[styles.messageBubble, styles.assistantBubble]}>
@@ -203,10 +271,10 @@ export default function HomeScreen() {
         </View>
       );
     }
-    
+
     return (
       <View style={[
-        styles.messageBubble, 
+        styles.messageBubble,
         isUser ? styles.userBubble : styles.assistantBubble
       ]}>
         {!isUser && (
@@ -221,36 +289,66 @@ export default function HomeScreen() {
       </View>
     );
   };
-  
+
   const insets = useSafeAreaInsets();
-  
+
+  const navigateToMessages = () => {
+    navigation.navigate('Messages');
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right']}>
       <StatusBar barStyle="light-content" />
-      
-      {/* Header with Branding */}
+
+      {/* Header with Branding and Search Button */}
       <View style={styles.header}>
         <View>
           <Text style={styles.brandName}>PeakFit</Text>
           <Text style={styles.welcomeText}>Welcome back,</Text>
           <Text style={styles.nameText}>{user?.displayName || 'Fitness Pro'}</Text>
         </View>
-        <TouchableOpacity
-          style={styles.profileButton}
-          onPress={() => navigation.navigate('Profile')}
-        >
-          <Image
-            source={profileImage ? { uri: profileImage } : defaultAvatar}
-            style={styles.profileImage}
-            defaultSource={defaultAvatar}
-          />
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          {/* Messages Icon */}
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={navigateToMessages}
+          >
+            <MaterialCommunityIcons name="chat" size={24} color="#3B82F6" />
+            {unreadMessages > 0 && (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationText}>
+                  {unreadMessages > 9 ? '9+' : unreadMessages}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          
+          {/* Search Icon */}
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={() => setShowSearchModal(true)}
+          >
+            <MaterialCommunityIcons name="account-search" size={24} color="#3B82F6" />
+          </TouchableOpacity>
+          
+          {/* Profile Icon */}
+          <TouchableOpacity
+            style={styles.profileButton}
+            onPress={() => navigation.navigate('Profile')}
+          >
+            <Image
+              source={profileImage ? { uri: profileImage } : defaultAvatar}
+              style={styles.profileImage}
+              defaultSource={defaultAvatar}
+            />
+          </TouchableOpacity>
+        </View>
       </View>
-      
+
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {/* Quick Actions */}
         <View style={styles.actionsRow}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.actionButton}
             onPress={() => navigation.navigate('Workout')}
           >
@@ -259,8 +357,8 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.actionText}>Start Workout</Text>
           </TouchableOpacity>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={styles.actionButton}
             onPress={() => navigation.navigate('ChatAI')}
           >
@@ -269,8 +367,8 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.actionText}>AI Coach</Text>
           </TouchableOpacity>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={styles.actionButton}
             onPress={() => navigation.navigate('Community')}
           >
@@ -280,7 +378,7 @@ export default function HomeScreen() {
             <Text style={styles.actionText}>Community</Text>
           </TouchableOpacity>
         </View>
-        
+
         {/* AI Chat Card - Collapsible */}
         <Surface style={styles.cardShadow}>
           <View style={styles.aiChatCard}>
@@ -289,13 +387,13 @@ export default function HomeScreen() {
                 <MaterialCommunityIcons name="robot" size={24} color="#3B82F6" />
                 <Text style={styles.aiChatTitle}>AI Fitness Coach</Text>
               </View>
-              <MaterialCommunityIcons 
-                name={chatExpanded ? "chevron-up" : "chevron-down"} 
-                size={24} 
-                color="#666" 
+              <MaterialCommunityIcons
+                name={chatExpanded ? "chevron-up" : "chevron-down"}
+                size={24}
+                color="#666"
               />
             </TouchableOpacity>
-            
+
             <Animated.View style={[styles.chatContainer, { height: chatHeight }]}>
               <FlatList
                 ref={flatListRef}
@@ -311,7 +409,7 @@ export default function HomeScreen() {
                   }
                 }}
               />
-              
+
               <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
@@ -327,8 +425,8 @@ export default function HomeScreen() {
                     maxLength={500}
                     editable={!waitingForResponse}
                   />
-                  
-                  <TouchableOpacity 
+
+                  <TouchableOpacity
                     style={[
                       styles.sendButton,
                       (!input.trim() || waitingForResponse) && styles.sendButtonDisabled
@@ -336,10 +434,10 @@ export default function HomeScreen() {
                     onPress={sendMessage}
                     disabled={!input.trim() || waitingForResponse}
                   >
-                    <MaterialCommunityIcons 
-                      name="send" 
-                      size={20} 
-                      color={input.trim() && !waitingForResponse ? "#FFFFFF" : "#666666"} 
+                    <MaterialCommunityIcons
+                      name="send"
+                      size={20}
+                      color={input.trim() && !waitingForResponse ? "#FFFFFF" : "#666666"}
                     />
                   </TouchableOpacity>
                 </View>
@@ -347,7 +445,7 @@ export default function HomeScreen() {
             </Animated.View>
           </View>
         </Surface>
-        
+
         {/* Steps API Coming Soon */}
         <Surface style={styles.cardShadow}>
           <View style={styles.stepsCard}>
@@ -360,13 +458,13 @@ export default function HomeScreen() {
                 <Text style={styles.stepsSubtitle}>Coming Soon</Text>
               </View>
             </View>
-            
+
             <View style={styles.stepsContent}>
               <View style={styles.stepsMetric}>
                 <Text style={styles.stepsCount}>0</Text>
                 <Text style={styles.stepsLabel}>Steps Today</Text>
               </View>
-              
+
               <View style={styles.stepsProgress}>
                 <View style={styles.stepsProgressBar}>
                   <View style={[styles.stepsProgressFill, { width: '0%' }]} />
@@ -376,10 +474,100 @@ export default function HomeScreen() {
             </View>
           </View>
         </Surface>
-        
+
         {/* Add some padding at the bottom */}
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* Search User Modal */}
+      <Modal
+        visible={showSearchModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowSearchModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Find Users</Text>
+              <IconButton
+                icon="close"
+                size={24}
+                color="#FFFFFF"
+                onPress={() => {
+                  setShowSearchModal(false);
+                  setSearchResults([]);
+                  setSearchQuery('');
+                }}
+              />
+            </View>
+            <View style={styles.searchInputContainer}>
+              <MaterialCommunityIcons name="magnify" size={24} color="#999" style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="Search by username..."
+                placeholderTextColor="#999"
+                autoCapitalize="none"
+                returnKeyType="search"
+                onSubmitEditing={handleSearch}
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')}>
+                  <MaterialCommunityIcons name="close-circle" size={20} color="#999" />
+                </TouchableOpacity>
+              )}
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.searchButton,
+                !searchQuery.trim() && styles.searchButtonDisabled
+              ]}
+              onPress={handleSearch}
+              disabled={!searchQuery.trim() || searching}
+            >
+              <Text style={styles.searchButtonText}>
+                {searching ? 'Searching...' : 'Search'}
+              </Text>
+            </TouchableOpacity>
+            {/* Search Results */}
+            {searchResults.length > 0 ? (
+              <FlatList
+                data={searchResults}
+                keyExtractor={item => item.id}
+                style={styles.searchResultsList}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={styles.userResultItem}
+                    onPress={() => {
+                      navigation.navigate('UserProfile', { userId: item.id });
+                      setShowSearchModal(false);
+                    }}
+                  >
+                    <Image
+                      source={item.photoURL ? { uri: item.photoURL } : defaultAvatar}
+                      style={styles.userResultAvatar}
+                    />
+                    <View style={styles.userResultInfo}>
+                      <Text style={styles.userResultName}>{item.displayName || item.username}</Text>
+                      <Text style={styles.userResultUsername}>@{item.username}</Text>
+                    </View>
+                    <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <Text style={styles.noResultsText}>No users found</Text>
+                }
+              />
+            ) : searching ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#3B82F6" />
+              </View>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -413,6 +601,19 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#FFFFFF',
   },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
   profileButton: {
     width: 44,
     height: 44,
@@ -429,6 +630,101 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
+
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalContainer: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 16,
+    padding: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2A2A2A',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    marginBottom: 20,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 16,
+    paddingVertical: 12,
+    marginLeft: 10,
+  },
+  searchButton: {
+    backgroundColor: '#3B82F6',
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  searchButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  searchButtonDisabled: {
+    backgroundColor: '#666666',
+  },
+  searchResultsList: {
+    marginTop: 16,
+    maxHeight: 300,
+  },
+  userResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+  },
+  userResultAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+  },
+  userResultInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  userResultName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  userResultUsername: {
+    fontSize: 14,
+    color: '#999',
+  },
+  noResultsText: {
+    color: '#999',
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 20,
+  },
+  loadingContainer: {
+    marginTop: 20,
+    alignItems: 'center',
+  },
+
+  // Keep your existing styles below
   actionsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -473,13 +769,12 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     textAlign: 'center',
   },
-  
+
   // Card shadow styles for iOS compatibility
   cardShadow: {
     marginHorizontal: 20,
     marginBottom: 20,
     borderRadius: 20,
-    // DO NOT add overflow: hidden here
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -492,148 +787,8 @@ const styles = StyleSheet.create({
       }
     }),
   },
-  
-  // AI Chat Card
-  aiChatCard: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 20,
-    overflow: 'hidden', // Move overflow to inner container
-    borderWidth: 1,
-    borderColor: '#2A2A2A',
-  },
-  aiChatHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-  },
-  aiTitleArea: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  aiChatTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    marginLeft: 10,
-    color: '#FFFFFF',
-  },
-  chatContainer: {
-    // No overflow hidden here to allow for scrolling
-  },
-  messagesContainer: {
-    padding: 16,
-    paddingBottom: 8,
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#2A2A2A',
-    backgroundColor: '#1A1A1A', // Added background color for visibility
-  },
-  input: {
-    flex: 1,
-    backgroundColor: '#2A2A2A',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginRight: 8,
-    color: '#FFFFFF',
-    fontSize: 16,
-    maxHeight: 100, // Limit height for multiline input
-  },
-  sendButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#3B82F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sendButtonDisabled: {
-    backgroundColor: '#2A2A2A',
-  },
-  
-  // Steps tracker card
-  stepsCard: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 20,
-    overflow: 'hidden', // Move overflow to inner container
-    borderWidth: 1,
-    borderColor: '#2A2A2A',
-    padding: 16,
-  },
-  stepsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  stepsIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#222',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  stepsInfo: {
-    flex: 1,
-  },
-  stepsTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  stepsSubtitle: {
-    fontSize: 14,
-    color: '#3B82F6',
-    fontWeight: '500',
-  },
-  stepsContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  stepsMetric: {
-    alignItems: 'center',
-    width: '30%',
-  },
-  stepsCount: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  stepsLabel: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 4,
-  },
-  stepsProgress: {
-    flex: 1,
-    marginLeft: 16,
-  },
-  stepsProgressBar: {
-    height: 8,
-    backgroundColor: '#333',
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginBottom: 8,
-  },
-  stepsProgressFill: {
-    height: '100%',
-    backgroundColor: '#3B82F6',
-  },
-  stepsGoal: {
-    fontSize: 12,
-    color: '#999',
-    textAlign: 'right',
-  },
-  
-  // Message bubbles
+
+  // Add all your other existing styles here...
   messageBubble: {
     marginBottom: 12,
     padding: 12,
@@ -668,5 +823,23 @@ const styles = StyleSheet.create({
   assistantText: {
     color: '#FFFFFF',
     fontSize: 16,
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    backgroundColor: '#FF3B30',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#121212',
+  },
+  notificationText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
 });

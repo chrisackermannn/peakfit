@@ -3,6 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider } from './context/AuthContext';
+import { MessageNotificationsProvider } from './context/MessageNotificationsContext';
 import LoginScreen from './screens/Auth/LoginScreen';
 import Tabs from './navigation/Tabs';
 import EditProfileScreen from './screens/Profile/EditProfileScreen';
@@ -12,6 +13,10 @@ import Welcome from './screens/Welcome';
 import { PaperProvider } from 'react-native-paper';
 import FlashMessage from "react-native-flash-message";
 import AdminScreen from './screens/AdminScreen';
+import UserProfileScreen from './screens/UserProfileScreen';
+import FriendsScreen from './screens/FriendsScreen';
+import MessagesScreen from './screens/MessagesScreen';
+import ChatConversationScreen from './screens/ChatConversationScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -90,6 +95,26 @@ function AppNavigator() {
           headerTintColor: '#fff',
         }} 
       />
+      <Stack.Screen
+        name="UserProfile"
+        component={UserProfileScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen 
+        name="Friends" 
+        component={FriendsScreen} 
+        options={{ headerShown: false }} 
+      />
+      <Stack.Screen 
+        name="Messages" 
+        component={MessagesScreen} 
+        options={{ headerShown: false }} 
+      />
+      <Stack.Screen 
+        name="ChatConversation" 
+        component={ChatConversationScreen} 
+        options={{ headerShown: false }} 
+      />
     </Stack.Navigator>
   );
 }
@@ -98,14 +123,16 @@ function AppNavigator() {
 export default function App() {
   return (
     <AuthProvider>
-      <PaperProvider>
-        <>
-          <NavigationContainer>
-            <AppNavigator />
-          </NavigationContainer>
-          <FlashMessage position="top" />
-        </>
-      </PaperProvider>
+      <MessageNotificationsProvider>
+        <PaperProvider>
+          <>
+            <NavigationContainer>
+              <AppNavigator />
+            </NavigationContainer>
+            <FlashMessage position="top" />
+          </>
+        </PaperProvider>
+      </MessageNotificationsProvider>
     </AuthProvider>
   );
 }

@@ -158,6 +158,11 @@ const ProfileScreen = ({ navigation, route }) => {
     navigation.navigate('WorkoutHistory');
   }, [navigation]);
 
+  // Navigate to friends
+  const navigateToFriends = useCallback(() => {
+    navigation.navigate('Friends');
+  }, [navigation]);
+
   if (loading && !refreshing) {
     return (
       <View style={styles.loadingContainer}>
@@ -325,6 +330,18 @@ const ProfileScreen = ({ navigation, route }) => {
       <Surface style={styles.shadowCard}>
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Settings</Text>
+          
+          {/* Friends Button */}
+          <TouchableOpacity 
+            style={styles.option}
+            onPress={navigateToFriends}
+          >
+            <View style={styles.optionContent}>
+              <MaterialCommunityIcons name="account-group" size={24} color="#3B82F6" />
+              <Text style={styles.optionText}>Friends</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+          </TouchableOpacity>
           
           <TouchableOpacity 
             style={styles.option}
