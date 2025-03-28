@@ -11,10 +11,6 @@ import { useAuth } from '../../context/AuthContext';
 const defaultAvatar = require('../../assets/default-avatar.png');
 const MAX_IMAGE_SIZE = 3 * 1024 * 1024; // 3MB in bytes
 
-// The configured path where storage-resize-images extension stores resized images
-// This needs to match your extension configuration
-const RESIZED_IMAGES_PATH = 'resized-images';
-
 export default function EditProfileScreen({ navigation }) {
   const { user, updateUserProfile } = useAuth();
   const [username, setUsername] = useState(user?.username || '');
@@ -22,10 +18,6 @@ export default function EditProfileScreen({ navigation }) {
   const [bio, setBio] = useState(user?.bio || '');
   const [imageUri, setImageUri] = useState(user?.photoURL || null);
   const [loading, setLoading] = useState(false);
-  const [isWebDev] = useState(() => 
-    Platform.OS === 'web' && 
-    (window?.location?.hostname === 'localhost' || window?.location?.hostname === '127.0.0.1')
-  );
   
   // Request permissions on component mount
   useEffect(() => {
@@ -33,7 +25,7 @@ export default function EditProfileScreen({ navigation }) {
       requestPermissions();
     }
   }, []);
-
+  
   const requestPermissions = async () => {
     if (Platform.OS !== 'web') {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -46,7 +38,7 @@ export default function EditProfileScreen({ navigation }) {
       }
     }
   };
-
+  
   // Pick image from gallery
   const pickImage = async () => {
     try {
@@ -54,79 +46,43 @@ export default function EditProfileScreen({ navigation }) {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
-        quality: isWebDev ? 0.05 : 0.6, // Reduced quality since the resize extension will handle resizing
-        base64: isWebDev, // Request base64 for web development
+        quality: 0.6, // Reduced quality for better performance
       });
-
+      
       if (!result.canceled && result.assets?.[0]) {
-        if (isWebDev && result.assets[0].base64) {
-          // For web dev, use data URI to avoid CORS and blob URL issues
-          const dataUri = `data:image/jpeg;base64,${result.assets[0].base64}`;
-          setImageUri(dataUri);
-          console.log("Using base64 data URI for web development");
-        } else {
-          // For native or production, use the URI
-          setImageUri(result.assets[0].uri);
-        }
+        setImageUri(result.assets[0].uri);
+        console.log("Image selected:", result.assets[0].uri);
       }
     } catch (error) {
       console.log('Error selecting image:', error);
       Alert.alert('Error', 'Failed to select image');
     }
   };
-
-  // Generate a placeholder URL for web development
-  const generatePlaceholderUrl = (userId) => {
-    return `https://placeholder-profile-${userId}-${Date.now()}.jpg`;
-  };
-
+  
   // Upload image to Firebase Storage
   const uploadImage = async (uri) => {
     if (!user?.uid) throw new Error('User not found');
     
-    // For web development, use localStorage instead of Firebase Storage
-    if (isWebDev && uri.startsWith('data:')) {
-      console.log("Web development environment detected - using placeholder with localStorage");
-      
-      // Generate a placeholder URL - this will be stored in Firestore
-      const placeholderUrl = generatePlaceholderUrl(user.uid);
-      
-      // Store the actual data URI in localStorage
-      try {
-        localStorage.setItem(`profile_image_${user.uid}`, uri);
-        console.log("Image data URI saved to localStorage");
-        
-        // Return the placeholder URL for storage in Firestore
-        return placeholderUrl;
-      } catch (e) {
-        console.warn("Failed to save image to localStorage:", e);
-        throw new Error('Failed to store image locally');
-      }
-    }
-    
-    // For native or production, upload to Firebase Storage using the resize extension
     try {
       // Create blob from URI
       const response = await fetch(uri);
       const blob = await response.blob();
       
-      // Check file size
-      if (blob.size > MAX_IMAGE_SIZE) {
-        Alert.alert('Image Too Large', 'Please choose an image under 3MB');
-        throw new Error('Image file is too large (max 3MB)');
-      }
-      
-      // Upload to specific path that triggers the resize extension
-      const storage = getStorage();
-      // Path format that will trigger the storage-resize-images extension
-      // The exact path depends on your extension configuration
-      const userProfilePath = `profile-images/${user.uid}`;
+      // Upload to Firebase Storage in the profilePics path to match rules
+      // Use the explicit bucket name to avoid CORS issues
+      const storage = getStorage(undefined, "gs://fir-basics-90f1d.firebasestorage.app");
       const filename = `profile_${Date.now()}.jpg`;
-      const storageRef = ref(storage, `${userProfilePath}/${filename}`);
+      const storageRef = ref(storage, `profilePics/${user.uid}/${filename}`);
       
-      // Upload the image
+      // Add metadata with content-type to help with CORS issues
+      const metadata = {
+        contentType: 'image/jpeg',
+        cacheControl: 'public, max-age=31536000',
+      };
+      
+      // Upload the image with metadata
       return new Promise((resolve, reject) => {
-        const uploadTask = uploadBytesResumable(storageRef, blob);
+        const uploadTask = uploadBytesResumable(storageRef, blob, metadata);
         
         uploadTask.on(
           'state_changed',
@@ -140,27 +96,10 @@ export default function EditProfileScreen({ navigation }) {
           },
           async () => {
             try {
-              // Get URL of the original uploaded file
+              // Get download URL of the uploaded image
               const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-              console.log('Original file uploaded successfully. URL:', downloadURL);
-              
-              // The extension will create resized versions in a path like:
-              // resized-images/{userProfilePath}/{filename}_200x200
-              // Wait a moment for the resize operation to complete
-              setTimeout(async () => {
-                try {
-                  // Construct the path to the resized image (based on extension config)
-                  // This assumes a 200x200 resize configuration in your extension
-                  const resizedRef = ref(storage, `${RESIZED_IMAGES_PATH}/${userProfilePath}/${filename}_200x200`);
-                  const resizedURL = await getDownloadURL(resizedRef);
-                  console.log('Resized image URL:', resizedURL);
-                  resolve(resizedURL);
-                } catch (resizeError) {
-                  console.warn('Could not get resized image, using original:', resizeError);
-                  // Fall back to the original URL if resized version isn't available
-                  resolve(downloadURL);
-                }
-              }, 2000); // Wait 2 seconds for resize operation to complete
+              console.log('Profile image uploaded successfully. URL:', downloadURL);
+              resolve(downloadURL);
             } catch (error) {
               console.error('Error getting download URL:', error);
               reject(error);
@@ -173,7 +112,7 @@ export default function EditProfileScreen({ navigation }) {
       throw error;
     }
   };
-
+  
   // Validate form inputs
   const validateForm = () => {
     if (!username.trim()) {
@@ -193,7 +132,7 @@ export default function EditProfileScreen({ navigation }) {
     
     return true;
   };
-
+  
   // Update profile data
   const updateProfileData = async (photoURL) => {
     try {
@@ -206,43 +145,33 @@ export default function EditProfileScreen({ navigation }) {
         updatedAt: new Date().toISOString()
       };
       
-      // Add photoURL if it changed (but never the full data URI)
+      // Add photoURL if it changed
       if (photoURL && photoURL !== user.photoURL) {
-        // Make sure we're not storing a full data URI in Firestore
-        if (!photoURL.startsWith('data:')) {
-          updateData.photoURL = photoURL;
-        }
+        updateData.photoURL = photoURL;
       }
       
       await updateDoc(userRef, updateData);
       console.log("Firestore document updated successfully");
       
-      // Update Auth
+      // Update Auth profile
       try {
-        // For Auth updates, don't include photo URL in web dev mode
-        if (isWebDev) {
-          await updateUserProfile({
-            displayName: displayName || username,
-            username: username.toLowerCase(),
-            bio: bio || ''
-            // Omit the photoURL for Auth in web dev mode
-          });
-          console.log("Auth profile updated (without photo URL for web dev)");
-        } else {
-          // For native or production, update everything
-          await updateUserProfile({
-            displayName: displayName || username,
-            username: username.toLowerCase(),
-            bio: bio || '',
-            photoURL: photoURL
-          });
-          console.log("Auth profile fully updated with photo URL");
+        // Create auth update object
+        const authUpdateData = {
+          displayName: displayName || username,
+          username: username.toLowerCase(),
+          bio: bio || ''
+        };
+        
+        // Add photoURL if it's a valid URL
+        if (photoURL && photoURL !== user.photoURL) {
+          authUpdateData.photoURL = photoURL;
         }
         
-        // Force refresh of the local user context
-        await refreshUserData();
+        await updateUserProfile(authUpdateData);
+        console.log("Auth profile updated successfully");
       } catch (authError) {
-        console.warn("Auth update error:", authError.message);
+        console.warn("Auth update warning (non-critical):", authError.message);
+        // Continue anyway since Firestore is the source of truth
       }
       
       return true;
@@ -251,44 +180,7 @@ export default function EditProfileScreen({ navigation }) {
       throw error;
     }
   };
-
-  // Get fresh user data
-  const refreshUserData = async () => {
-    if (!user?.uid) return;
-    
-    try {
-      // Get the latest data from Firestore
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
-      
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        
-        // In web dev, check if we have a stored image in localStorage
-        let photoURL = userData.photoURL;
-        if (isWebDev) {
-          const storedImage = localStorage.getItem(`profile_image_${user.uid}`);
-          if (storedImage && storedImage.startsWith('data:')) {
-            // Use the locally stored image instead of the Firestore URL
-            photoURL = storedImage;
-          }
-        }
-        
-        // Update the local user context - including local image if in web dev
-        await updateUserProfile({
-          ...user,
-          displayName: userData.displayName || userData.username,
-          username: userData.username,
-          bio: userData.bio || '',
-          photoURL: photoURL
-        });
-        
-        console.log("User data refreshed from Firestore");
-      }
-    } catch (error) {
-      console.error("Error refreshing user data:", error);
-    }
-  };
-
+  
   // Handle save button press
   const handleSave = async () => {
     if (!validateForm()) return;
@@ -372,7 +264,7 @@ export default function EditProfileScreen({ navigation }) {
       setLoading(false);
     }
   };
-
+  
   if (!user) {
     return (
       <View style={styles.loadingContainer}>
@@ -380,7 +272,7 @@ export default function EditProfileScreen({ navigation }) {
       </View>
     );
   }
-
+  
   return (
     <View style={styles.container}>
       <TouchableOpacity style={styles.imageContainer} onPress={pickImage}>
@@ -431,20 +323,14 @@ export default function EditProfileScreen({ navigation }) {
           />
         </View>
         
-        {isWebDev && (
-          <Text style={styles.devNote}>
-            Note: In web development mode, profile pictures are saved locally to your browser.
-          </Text>
-        )}
-        
         <Button
           mode="contained"
           onPress={handleSave}
           loading={loading}
-          style={styles.saveButton}
           disabled={loading}
+          style={styles.saveButton}
         >
-          Save Changes
+          Save Profile
         </Button>
       </View>
     </View>
@@ -454,65 +340,62 @@ export default function EditProfileScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
-    padding: 20,
+    backgroundColor: '#0F0F0F',
+    alignItems: 'center',
+    paddingTop: 30,
   },
   imageContainer: {
-    alignItems: 'center',
-    marginVertical: 20,
     position: 'relative',
-    width: 150,
-    height: 150,
-    alignSelf: 'center',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    overflow: 'hidden',
+    marginBottom: 30,
+    backgroundColor: '#2A2A2A',
   },
   profileImage: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   editBadge: {
     position: 'absolute',
-    right: 0,
     bottom: 0,
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 12,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     paddingVertical: 6,
-    borderRadius: 15,
+    alignItems: 'center',
   },
   editBadgeText: {
-    color: '#fff',
+    color: '#FFF',
     fontSize: 12,
     fontWeight: '600',
   },
   form: {
-    flex: 1,
+    width: '90%',
+    maxWidth: 400,
   },
   inputContainer: {
     marginBottom: 20,
   },
   label: {
+    color: '#FFF',
     fontSize: 16,
-    fontWeight: '600',
     marginBottom: 8,
-    color: '#333',
+    fontWeight: '500',
   },
   input: {
-    backgroundColor: '#f5f5f5',
-    borderRadius: 10,
-    padding: 15,
+    backgroundColor: '#2A2A2A',
+    borderRadius: 8,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    color: '#FFF',
     fontSize: 16,
   },
   bioInput: {
     height: 100,
     textAlignVertical: 'top',
-  },
-  devNote: {
-    color: '#FF3B30',
-    fontSize: 12,
-    marginTop: 10,
-    marginBottom: 15,
-    textAlign: 'center',
-    fontStyle: 'italic',
   },
   saveButton: {
     marginTop: 20,

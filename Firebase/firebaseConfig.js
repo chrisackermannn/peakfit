@@ -22,7 +22,7 @@ const db = initializeFirestore(app, {
 });
 
 // Initialize Firebase storage with CORS settings
-const storage = getStorage(app);
+const storage = getStorage(app, "gs://fir-basics-90f1d.firebasestorage.app");
 
 // If in development, you might want to use emulators
 if (process.env.NODE_ENV === 'development') {
