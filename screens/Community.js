@@ -11,19 +11,17 @@ import {
   Alert,
   ScrollView,
   SafeAreaView,
-  Platform,
   Image,
   Modal
 } from 'react-native';
-import { Card, Button, IconButton, Avatar, Divider, Surface } from 'react-native-paper';
+import { Card, Button, IconButton, Avatar, Divider } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
 import { getGlobalWorkouts, toggleLike, addComment, saveTemplate } from '../data/firebaseHelpers';
 import { format } from 'date-fns';
-import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, limit, onSnapshot, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
 import { showMessage } from "react-native-flash-message";
 
 const defaultAvatar = require('../assets/default-avatar.png');
@@ -39,13 +37,7 @@ const CommunityScreen = () => {
   const [templateNameModalVisible, setTemplateNameModalVisible] = useState(false);
   const [templateName, setTemplateName] = useState('');
   const [currentWorkout, setCurrentWorkout] = useState(null);
-  
-  const categories = [
-    { id: 1, title: 'Workouts', icon: 'dumbbell', navigate: true },
-    { id: 2, title: 'Monthly Challenges', icon: 'trophy-outline', navigate: false },
-    { id: 3, title: 'Diets', icon: 'food-apple', navigate: false },
-    { id: 4, title: 'Trending', icon: 'trending-up', navigate: false }
-  ];
+  const [activeTab, setActiveTab] = useState('global');
 
   // Format duration helper function
   const formatDuration = (seconds) => {
@@ -55,16 +47,56 @@ const CommunityScreen = () => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const loadWorkouts = async () => {
+  const loadWorkouts = async (tab = activeTab) => {
     try {
       setLoading(true);
-      const q = query(
-        collection(db, 'globalWorkouts'),
-        orderBy('createdAt', 'desc'),
-        limit(20)
-      );
+      let workoutQuery;
+      
+      if (tab === 'global') {
+        // Global feed - all public workouts
+        workoutQuery = query(
+          collection(db, 'globalWorkouts'),
+          orderBy('createdAt', 'desc'),
+          limit(20)
+        );
+      } else {
+        // Friends feed - only workouts from friends
+        if (!user?.uid) {
+          setWorkouts([]);
+          setLoading(false);
+          return () => {};
+        }
+        
+        // Get current user's friend list from Firestore
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        
+        if (!userDocSnap.exists()) {
+          setWorkouts([]);
+          setLoading(false);
+          return () => {};
+        }
+        
+        const userData = userDocSnap.data();
+        const friendIds = userData.friends || [];
+        
+        // If no friends, show empty state
+        if (friendIds.length === 0) {
+          setWorkouts([]);
+          setLoading(false);
+          return () => {};
+        }
+        
+        // Query workouts from friends only
+        workoutQuery = query(
+          collection(db, 'globalWorkouts'),
+          where('userId', 'in', friendIds),
+          orderBy('createdAt', 'desc'),
+          limit(20)
+        );
+      }
 
-      const unsubscribe = onSnapshot(q, (snapshot) => {
+      const unsubscribe = onSnapshot(workoutQuery, (snapshot) => {
         const newWorkouts = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data(),
@@ -79,7 +111,7 @@ const CommunityScreen = () => {
         setLoading(false);
       });
 
-      return () => unsubscribe();
+      return unsubscribe;
     } catch (error) {
       console.error('Error loading workouts:', error);
       setLoading(false);
@@ -88,17 +120,17 @@ const CommunityScreen = () => {
   };
 
   useEffect(() => {
-    const cleanup = loadWorkouts();
+    const cleanup = loadWorkouts(activeTab);
     return () => {
       if (typeof cleanup === 'function') {
         cleanup();
       }
     };
-  }, []);
+  }, [activeTab, user?.uid]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadWorkouts();
+    await loadWorkouts(activeTab);
     setRefreshing(false);
   };
 
@@ -161,7 +193,6 @@ const CommunityScreen = () => {
           name: ex.name,
           sets: ex.sets,
           reps: ex.reps
-          // Weight intentionally omitted
         }))
       };
       
@@ -183,27 +214,45 @@ const CommunityScreen = () => {
     }
   };
 
+  // Navigate to user profile
+  const handleUserPress = (userId) => {
+    navigation.navigate('UserProfile', { userId });
+  };
+
   // Render comment section
   const renderComments = (item) => (
     <View style={styles.commentsSection}>
       <Divider style={styles.divider} />
       
       {/* Comments List */}
-      {item.comments?.map((comment, index) => (
-        <View key={index} style={styles.commentContainer}>
-          <View style={styles.commentHeader}>
-            <Avatar.Image 
-              size={24} 
-              source={comment.userPhotoURL ? { uri: comment.userPhotoURL } : defaultAvatar}
-            />
-            <Text style={styles.commentUser}>{comment.userDisplayName}</Text>
-            <Text style={styles.commentTime}>
-              {format(new Date(comment.createdAt), 'MMM d, h:mm a')}
-            </Text>
+      {item.comments?.map((comment, index) => {
+        // Generate unique timestamp for each avatar to force refresh
+        const imageKey = Date.now() + index;
+        return (
+          <View key={index} style={styles.commentContainer}>
+            <View style={styles.commentHeader}>
+              <TouchableOpacity 
+                onPress={() => handleUserPress(comment.userId)}
+                style={styles.commentAvatarContainer}
+              >
+                <Avatar.Image 
+                  size={24} 
+                  source={
+                    comment.userPhotoURL 
+                      ? { uri: `${comment.userPhotoURL}?t=${imageKey}` } 
+                      : defaultAvatar
+                  }
+                />
+              </TouchableOpacity>
+              <Text style={styles.commentUser}>{comment.userDisplayName}</Text>
+              <Text style={styles.commentTime}>
+                {format(new Date(comment.createdAt), 'MMM d, h:mm a')}
+              </Text>
+            </View>
+            <Text style={styles.commentText}>{comment.text}</Text>
           </View>
-          <Text style={styles.commentText}>{comment.text}</Text>
-        </View>
-      ))}
+        );
+      })}
 
       {/* Comment Input */}
       {selectedWorkout?.id === item.id && (
@@ -213,12 +262,14 @@ const CommunityScreen = () => {
             value={comment}
             onChangeText={setComment}
             placeholder="Add a comment..."
+            placeholderTextColor="#999"
             multiline
             maxLength={500}
           />
           <IconButton
             icon="send"
             size={20}
+            color="#3B82F6"
             onPress={() => handleComment(item.id)}
             disabled={!comment.trim()}
           />
@@ -232,10 +283,13 @@ const CommunityScreen = () => {
     <Card style={styles.workoutCard}>
       <Card.Content>
         <View style={styles.userInfo}>
-          <TouchableOpacity style={styles.userHeader}>
+          <TouchableOpacity 
+            style={styles.userHeader}
+            onPress={() => handleUserPress(item.userId)}
+          >
             <Avatar.Image 
               size={40} 
-              source={item.userPhotoURL ? { uri: item.userPhotoURL } : defaultAvatar} 
+              source={item.userPhotoURL ? { uri: `${item.userPhotoURL}?t=${Date.now()}` } : defaultAvatar} 
             />
             <View style={styles.userMeta}>
               <Text style={styles.userName}>
@@ -254,7 +308,6 @@ const CommunityScreen = () => {
               onPress={() => copyWorkoutTemplate(item)}
               style={styles.copyButton}
             />
-            <IconButton icon="dots-vertical" size={20} onPress={() => {}} />
           </View>
         </View>
 
@@ -324,7 +377,7 @@ const CommunityScreen = () => {
     </View>
   );
 
-  if (loading) {
+  if (loading && !refreshing) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#007AFF" />
@@ -338,99 +391,101 @@ const CommunityScreen = () => {
         <Text style={styles.pageTitle}>Community</Text>
         <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
           <Image 
-            source={user?.photoURL ? { uri: user.photoURL } : defaultAvatar}
+            source={user?.photoURL ? { uri: `${user.photoURL}?t=${Date.now()}` } : defaultAvatar}
             style={styles.profileImage}
           />
         </TouchableOpacity>
       </View>
 
-      <ScrollView 
-        style={styles.scrollView}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-      >
-        <View style={styles.categoriesWrapper}>
-          {categories.map(category => (
-            <TouchableOpacity 
-              key={category.id} 
-              style={styles.categoryBox}
-              onPress={() => category.navigate && navigation.navigate('Profile')}
-              activeOpacity={category.navigate ? 0.7 : 1}
-            >
-              <MaterialCommunityIcons 
-                name={category.icon} 
-                size={24} 
-                color="#3B82F6"
-              />
-              <Text style={styles.categoryTitle}>{category.title}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+      {/* Tab Navigation */}
+      <View style={styles.tabContainer}>
+        <TouchableOpacity 
+          style={[styles.tab, activeTab === 'global' && styles.activeTab]} 
+          onPress={() => setActiveTab('global')}
+        >
+          <Text style={[styles.tabText, activeTab === 'global' && styles.activeTabText]}>Global</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.tab, activeTab === 'friends' && styles.activeTab]} 
+          onPress={() => setActiveTab('friends')}
+        >
+          <Text style={[styles.tabText, activeTab === 'friends' && styles.activeTabText]}>Friends</Text>
+        </TouchableOpacity>
+      </View>
 
-        <View style={styles.divider} />
-        
+      {workouts.length > 0 ? (
         <FlatList
           data={workouts}
           renderItem={renderWorkout}
-          keyExtractor={item => item.id}
-          scrollEnabled={false}
-          ListHeaderComponent={
-            <Text style={styles.sectionTitle}>Latest Activities</Text>
-          }
+          keyExtractor={(item) => item.id}
           contentContainerStyle={styles.feedContainer}
-          ListEmptyComponent={
-            <Text style={styles.emptyText}>No workouts found</Text>
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
         />
-      </ScrollView>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.emptyContainer}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+        >
+          <MaterialCommunityIcons 
+            name={activeTab === 'global' ? "earth" : "account-group"} 
+            size={60} 
+            color="#666" 
+          />
+          <Text style={styles.emptyText}>
+            {activeTab === 'global' 
+              ? "No workouts posted yet" 
+              : "No workout posts from friends yet"}
+          </Text>
+          {activeTab === 'friends' && (
+            <Button 
+              mode="contained" 
+              onPress={() => navigation.navigate('Friends')}
+              style={styles.findFriendsButton}
+            >
+              Find Friends
+            </Button>
+          )}
+        </ScrollView>
+      )}
 
       {/* Template Name Modal */}
       <Modal
         visible={templateNameModalVisible}
         transparent={true}
-        animationType="slide"
+        animationType="fade"
         onRequestClose={() => setTemplateNameModalVisible(false)}
       >
-        <View style={styles.modalContainer}>
-          <Surface style={styles.modalContent}>
-            <View style={{ overflow: 'hidden' }}>
-              <Text style={styles.modalTitle}>Save Template</Text>
-              <Text style={styles.modalSubtitle}>Give this workout template a name:</Text>
-              
-              <TextInput
-                style={styles.templateNameInput}
-                value={templateName}
-                onChangeText={setTemplateName}
-                placeholder="Template Name"
-                placeholderTextColor="#666"
-              />
-              
-              <View style={styles.modalActions}>
-                <Button
-                  mode="outlined"
-                  onPress={() => {
-                    setTemplateNameModalVisible(false);
-                    setTemplateName('');
-                    setCurrentWorkout(null);
-                  }}
-                  style={styles.cancelButton}
-                >
-                  Cancel
-                </Button>
-                
-                <Button
-                  mode="contained"
-                  onPress={saveWorkoutTemplate}
-                  style={styles.saveButton}
-                  disabled={!templateName.trim()}
-                >
-                  Save
-                </Button>
-              </View>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Save as Template</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Enter template name"
+              placeholderTextColor="#999"
+              value={templateName}
+              onChangeText={setTemplateName}
+            />
+            <View style={styles.modalButtons}>
+              <Button
+                mode="text"
+                onPress={() => setTemplateNameModalVisible(false)}
+                style={styles.modalButton}
+              >
+                Cancel
+              </Button>
+              <Button
+                mode="contained"
+                onPress={saveWorkoutTemplate}
+                style={[styles.modalButton, styles.saveButton]}
+              >
+                Save
+              </Button>
             </View>
-          </Surface>
+          </View>
         </View>
       </Modal>
     </SafeAreaView>
@@ -441,9 +496,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0A0A0A',
-  },
-  scrollView: {
-    flex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -466,29 +518,29 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#3B82F6',
   },
-  categoriesWrapper: {
+  tabContainer: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: 16,
-    gap: 12,
+    marginBottom: 8,
+    paddingHorizontal: 16,
+    paddingTop: 12,
   },
-  categoryBox: {
-    width: '48%',
-    height: 70,
-    backgroundColor: '#141414',
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#222',
+  tab: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    marginRight: 12,
+    borderRadius: 20,
+    backgroundColor: '#1A1A1A',
   },
-  categoryTitle: {
+  activeTab: {
+    backgroundColor: '#3B82F6',
+  },
+  tabText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#FFF',
-    flex: 1,
+    color: '#999',
+  },
+  activeTabText: {
+    color: '#FFFFFF',
   },
   divider: {
     height: 1,
@@ -587,11 +639,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#0A0A0A',
   },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
   emptyText: {
     fontSize: 16,
     color: '#666',
     textAlign: 'center',
     marginTop: 20,
+    marginBottom: 20,
+  },
+  findFriendsButton: {
+    backgroundColor: '#3B82F6',
+    marginTop: 16,
   },
   cardActions: {
     flexDirection: 'row',
@@ -611,11 +674,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
+  commentAvatarContainer: {
+    marginRight: 8,
+  },
   commentUser: {
     fontSize: 14,
     fontWeight: '600',
     color: '#FFF',
-    marginLeft: 8,
     flex: 1,
   },
   commentTime: {
@@ -623,74 +688,59 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   commentText: {
-    fontSize: 15,
-    color: '#CCC',
-    marginLeft: 32,
-    lineHeight: 20,
+    fontSize: 14,
+    color: '#DDD',
+    paddingLeft: 32,
   },
   commentInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#141414',
-    borderTopWidth: 1,
-    borderTopColor: '#222',
-    gap: 12,
+    marginTop: 12,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 20,
+    paddingLeft: 12,
   },
   commentInput: {
     flex: 1,
-    backgroundColor: '#1A1A1A',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
     color: '#FFF',
-    fontSize: 15,
+    paddingVertical: 8,
   },
-  modalContainer: {
+  modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.75)',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'center',
-    padding: 16,
+    paddingHorizontal: 20,
   },
   modalContent: {
-    backgroundColor: '#141414',
+    backgroundColor: '#1A1A1A',
     borderRadius: 16,
-    padding: 24,
+    padding: 20,
   },
   modalTitle: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 18,
+    fontWeight: '600',
     color: '#FFF',
-    marginBottom: 8,
+    marginBottom: 16,
+    textAlign: 'center',
   },
-  modalSubtitle: {
-    fontSize: 16,
-    color: '#999',
+  modalInput: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#FFF',
     marginBottom: 20,
   },
-  templateNameInput: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    padding: 16,
-    color: '#FFF',
-    fontSize: 16,
-    marginBottom: 24,
-  },
-  modalActions: {
+  modalButtons: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
+    justifyContent: 'flex-end',
   },
-  cancelButton: {
-    flex: 1,
-    borderColor: '#3B82F6',
-    borderRadius: 12,
+  modalButton: {
+    marginLeft: 8,
   },
   saveButton: {
-    flex: 1,
     backgroundColor: '#3B82F6',
-    borderRadius: 12,
-  },
+  }
 });
 
 export default CommunityScreen;

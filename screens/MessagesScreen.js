@@ -1,5 +1,5 @@
 // screens/MessagesScreen.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,13 +8,15 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Image,
-  Alert
+  Alert,
+  RefreshControl,
+  Platform
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Surface, IconButton, Button } from 'react-native-paper';
+import { Surface, IconButton, Button, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect, CommonActions } from '@react-navigation/native';
 import { doc, collection, query, where, orderBy, getDocs, getDoc } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
 import { getUserConversations } from '../data/messagingHelpers';
@@ -29,201 +31,308 @@ export default function MessagesScreen() {
   const [error, setError] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
-
-  useEffect(() => {
-    if (user?.uid) {
-      loadConversations();
-    }
-    
-    return () => {
-      // Clean up when component unmounts
-    };
-  }, [user?.uid]);
+  const [imageKey, setImageKey] = useState(Date.now());
   
-  // Load conversations from Firestore
+  // For iOS safe area bottom padding
+  const bottomInset = Platform.OS === 'ios' ? 24 : 0;
+
+  // Load conversations when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.uid) {
+        loadConversations();
+        setImageKey(Date.now()); // Refresh image cache when screen is focused
+      }
+      
+      return () => {}; // Cleanup function
+    }, [user?.uid])
+  );
+  
+  // Navigation helpers
+  const navigateToTab = (tabName) => {
+    navigation.dispatch(
+      CommonActions.reset({
+        index: 0,
+        routes: [
+          { name: 'Tabs', params: { screen: tabName } },
+        ],
+      })
+    );
+  };
+  
+  // Load conversations
   const loadConversations = async () => {
     if (!user?.uid) return;
     
     try {
-      setLoading(true);
       setError(null);
       
-      try {
-        // Get all conversations for the current user
-        const conversationsData = await getUserConversations(user.uid);
-        setConversations(conversationsData || []);
-      } catch (err) {
-        console.error('Error loading conversations:', err);
-        
-        if (err.code === 'permission-denied') {
-          setError('You have no message history yet. Start a conversation to begin messaging.');
-        } else {
-          setError('Failed to load messages. Please try again later.');
-        }
+      if (!refreshing) {
+        setLoading(true);
       }
+      
+      const conversationsData = await getUserConversations(user.uid);
+      
+      // Ensure user data is up to date by fetching latest user details
+      const updatedConversations = await Promise.all(
+        conversationsData.map(async (conv) => {
+          try {
+            if (conv.withUser && conv.withUser.id) {
+              // Fetch fresh user data for the conversation partner
+              const userDoc = await getDoc(doc(db, 'users', conv.withUser.id));
+              
+              if (userDoc.exists()) {
+                const userData = userDoc.data();
+                return {
+                  ...conv,
+                  withUser: {
+                    ...conv.withUser,
+                    name: userData.displayName || userData.username || conv.withUser.name || 'User',
+                    image: userData.photoURL || conv.withUser.image
+                  }
+                };
+              }
+            }
+            return conv;
+          } catch (err) {
+            console.log(`Error fetching user data for conversation ${conv.id}:`, err);
+            return conv;
+          }
+        })
+      );
+      
+      setConversations(updatedConversations);
     } catch (err) {
-      console.error('Error in loadConversations:', err);
-      setError('Something went wrong. Please try again.');
+      console.error('Error loading conversations:', err);
+      setError('Failed to load conversations');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
   
-  // Format timestamp to readable date/time
-  const formatTimestamp = (timestamp) => {
-    if (!timestamp) return "";
-    
-    const date = timestamp instanceof Date ? timestamp : 
-                 (typeof timestamp.toDate === 'function' ? timestamp.toDate() : new Date(timestamp));
-    
-    const now = new Date();
-    const diffMs = now - date;
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    
-    // Show time for today, show date for older messages
-    if (diffDays === 0) {
-      return format(date, 'h:mm a');
-    } else if (diffDays === 1) {
-      return 'Yesterday';
-    } else if (diffDays < 7) {
-      return format(date, 'EEEE'); // Day name
-    } else {
-      return format(date, 'MMM d'); // Month and day
-    }
-  };
-  
-  // Navigate to chat screen with a specific conversation
-  const openChat = (conversation) => {
-    const otherUser = conversation.withUser || conversation.otherUser || {};
-    
-    navigation.navigate('ChatConversation', { 
-      conversationId: conversation.id,
-      otherUser: {
-        id: otherUser.id,
-        name: otherUser.displayName || otherUser.name || 'User',
-        image: otherUser.photoURL || otherUser.image || null
-      }
-    });
-  };
-  
-  // Navigate to find new people to message
-  const goToFindPeople = () => {
-    navigation.navigate('Friends');
-  };
-  
-  // Handle refresh
+  // Handle pull-to-refresh
   const handleRefresh = () => {
     setRefreshing(true);
     loadConversations();
   };
   
-  if (loading && !refreshing) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#3B82F6" />
-      </View>
-    );
-  }
-  
-  const renderConversationItem = ({ item }) => {
-    // Handle both old and new conversation formats
-    const otherUser = item.withUser || item.otherUser || {};
+  // Format message date
+  const formatMessageTime = (timestamp) => {
+    if (!timestamp) return '';
     
-    return (
-      <TouchableOpacity
-        style={styles.channelItem}
-        onPress={() => openChat(item)}
+    const messageDate = timestamp instanceof Date ? 
+      timestamp : 
+      (typeof timestamp.toDate === 'function' ? timestamp.toDate() : new Date(timestamp));
+    
+    const now = new Date();
+    const isToday = 
+      messageDate.getDate() === now.getDate() &&
+      messageDate.getMonth() === now.getMonth() &&
+      messageDate.getFullYear() === now.getFullYear();
+    
+    if (isToday) {
+      return format(messageDate, 'h:mm a');
+    }
+    
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday = 
+      messageDate.getDate() === yesterday.getDate() &&
+      messageDate.getMonth() === yesterday.getMonth() &&
+      messageDate.getFullYear() === yesterday.getFullYear();
+    
+    if (isYesterday) {
+      return 'Yesterday';
+    }
+    
+    return format(messageDate, 'MM/dd/yyyy');
+  };
+  
+  // Start a new conversation
+  const startNewConversation = () => {
+    navigation.navigate('Friends', { action: 'message' });
+  };
+
+  // Open a conversation
+  const openConversation = (conversation) => {
+    navigation.navigate('ChatConversation', {
+      conversationId: conversation.id,
+      otherUser: conversation.withUser
+    });
+  };
+  
+  // View user profile
+  const viewProfile = (userId) => {
+    navigation.navigate('UserProfile', { userId });
+  };
+  
+  // Render conversation item
+  const renderItem = ({ item }) => (
+    <TouchableOpacity 
+      style={styles.conversationItem}
+      onPress={() => openConversation(item)}
+    >
+      <TouchableOpacity 
+        onPress={() => viewProfile(item.withUser.id)}
+        style={styles.avatarContainer}
       >
-        <Image
-          source={otherUser?.photoURL || otherUser?.image ? { uri: otherUser.photoURL || otherUser.image } : defaultAvatar}
-          style={styles.avatar}
+        <Image 
+          source={item.withUser.image ? { uri: `${item.withUser.image}?t=${imageKey}` } : defaultAvatar}
+          style={[styles.avatar, item.unreadCount > 0 && styles.unreadAvatar]}
           defaultSource={defaultAvatar}
         />
-        
-        <View style={styles.channelInfo}>
-          <View style={styles.channelNameRow}>
-            <Text style={styles.channelName}>
-              {otherUser?.displayName || otherUser?.name || 'User'}
-            </Text>
-            <Text style={styles.messageTime}>
-              {formatTimestamp(item.lastMessageAt)}
-            </Text>
-          </View>
-          
-          <Text style={[
-            styles.lastMessage,
-            item.unreadCount > 0 && styles.unreadMessage
-          ]} numberOfLines={1}>
-            {item.lastMessage || 'Start a conversation'}
+      </TouchableOpacity>
+      
+      <View style={styles.conversationContent}>
+        <View style={styles.conversationHeader}>
+          <Text style={styles.userName} numberOfLines={1}>
+            {item.withUser.name}
+          </Text>
+          <Text style={styles.timeText}>
+            {formatMessageTime(item.lastMessageAt)}
           </Text>
         </View>
         
-        {(item.unreadCount > 0) && (
-          <View style={styles.unreadBadge}>
-            <Text style={styles.unreadCount}>{item.unreadCount}</Text>
-          </View>
-        )}
-        
-        <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
-      </TouchableOpacity>
-    );
-  };
-  
-  return (
-    <SafeAreaView style={styles.container} edges={['left', 'right']}>
-      <View style={styles.header}>
-        <IconButton
-          icon="arrow-left"
-          color="#FFFFFF"
-          size={24}
-          onPress={() => navigation.goBack()}
-          style={styles.backIcon}
-        />
-        <Text style={styles.headerTitle}>Messages</Text>
-        
-        <IconButton
-          icon="account-plus"
-          color="#FFFFFF"
-          size={24}
-          onPress={goToFindPeople}
-        />
+        <View style={styles.messageRow}>
+          <Text 
+            style={[
+              styles.lastMessage,
+              item.unreadCount > 0 && styles.unreadText
+            ]} 
+            numberOfLines={1}
+          >
+            {item.lastMessage}
+          </Text>
+          
+          {item.unreadCount > 0 && (
+            <View style={styles.unreadBadge}>
+              <Text style={styles.unreadCount}>
+                {item.unreadCount > 99 ? '99+' : item.unreadCount}
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
+    </TouchableOpacity>
+  );
+
+  // Empty state component
+  const renderEmptyComponent = () => (
+    <View style={styles.emptyContainer}>
+      <MaterialCommunityIcons
+        name="chat-outline"
+        size={80}
+        color="#888"
+      />
+      <Text style={styles.emptyTitle}>No conversations yet</Text>
+      <Text style={styles.emptySubtitle}>
+        Start a conversation with a friend to see it here
+      </Text>
+      <Button
+        mode="contained"
+        onPress={startNewConversation}
+        style={styles.newChatButton}
+      >
+        Start a New Chat
+      </Button>
+    </View>
+  );
+  
+  // Loading indicator
+  if (loading && !refreshing) {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#3B82F6" />
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <SafeAreaView style={{ flex: 1 }}>
+        <View style={styles.header}>
+          <IconButton 
+            icon="arrow-left" 
+            size={24}
+            color="#FFFFFF"
+            onPress={() => navigation.goBack()}
+            style={styles.backIcon}
+          />
+          <Text style={styles.headerTitle}>Messages</Text>
+          <IconButton 
+            icon="plus" 
+            size={24}
+            color="#FFFFFF"
+            onPress={startNewConversation}
+          />
+        </View>
+        
+        {error ? (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{error}</Text>
+            <Button mode="contained" onPress={loadConversations} style={{ marginTop: 12 }}>
+              Try Again
+            </Button>
+          </View>
+        ) : (
+          <FlatList
+            data={conversations}
+            renderItem={renderItem}
+            keyExtractor={item => item.id}
+            contentContainerStyle={styles.listContent}
+            ListEmptyComponent={renderEmptyComponent}
+            ItemSeparatorComponent={() => <Divider style={styles.divider} />}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                colors={['#3B82F6']}
+                tintColor="#3B82F6"
+              />
+            }
+          />
+        )}
+      </SafeAreaView>
       
-      {error ? (
-        <View style={styles.errorContainer}>
-          <MaterialCommunityIcons name="chat-outline" size={60} color="#666" />
-          <Text style={styles.errorText}>{error}</Text>
-          <Button 
-            mode="contained" 
-            onPress={goToFindPeople} 
-            style={styles.startChatButton}
-          >
-            Start Messaging
-          </Button>
-        </View>
-      ) : conversations.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <MaterialCommunityIcons name="chat-outline" size={60} color="#666" />
-          <Text style={styles.emptyText}>No messages yet</Text>
-          <TouchableOpacity
-            style={styles.startChatButton}
-            onPress={goToFindPeople}
-          >
-            <Text style={styles.startChatButtonText}>Start a Conversation</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <FlatList
-          data={conversations}
-          renderItem={renderConversationItem}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContainer}
-          onRefresh={handleRefresh}
-          refreshing={refreshing}
-        />
-      )}
-    </SafeAreaView>
+      {/* Tab Bar Navigation - Matches the Tabs.js navigator */}
+      <View style={[
+        styles.tabBar, 
+        { height: 60 + bottomInset, paddingBottom: bottomInset }
+      ]}>
+        <TouchableOpacity 
+          style={styles.tabItem}
+          onPress={() => navigateToTab('Home')}
+        >
+          <MaterialCommunityIcons name="home-outline" size={24} color="#999" />
+          <Text style={styles.tabLabel}>Home</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.tabItem}
+          onPress={() => navigateToTab('Workout')}
+        >
+          <MaterialCommunityIcons name="dumbbell" size={24} color="#999" />
+          <Text style={styles.tabLabel}>Workout</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.tabItem}
+          onPress={() => navigateToTab('Community')}
+        >
+          <MaterialCommunityIcons name="account-group-outline" size={24} color="#999" />
+          <Text style={styles.tabLabel}>Community</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.tabItem}
+          onPress={() => navigateToTab('Profile')}
+        >
+          <MaterialCommunityIcons name="account-outline" size={24} color="#999" />
+          <Text style={styles.tabLabel}>Profile</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
@@ -232,13 +341,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#121212',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#121212',
+  },
   header: {
     backgroundColor: '#1A1A1A',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    paddingVertical: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
   },
   backIcon: {
     marginRight: 8,
@@ -250,106 +367,141 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-  loadingContainer: {
+  listContent: {
+    flexGrow: 1,
+    paddingBottom: 20,
+  },
+  conversationItem: {
+    flexDirection: 'row',
+    padding: 16,
+    alignItems: 'center',
+  },
+  avatarContainer: {
+    marginRight: 16,
+  },
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#2A2A2A',
+  },
+  unreadAvatar: {
+    borderWidth: 2,
+    borderColor: '#3B82F6',
+  },
+  conversationContent: {
     flex: 1,
+  },
+  conversationHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  userName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    flex: 1,
+    marginRight: 8,
+  },
+  timeText: {
+    fontSize: 12,
+    color: '#999',
+  },
+  messageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  lastMessage: {
+    fontSize: 14,
+    color: '#999',
+    flex: 1,
+    marginRight: 8,
+  },
+  unreadText: {
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  unreadBadge: {
+    backgroundColor: '#3B82F6',
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#121212',
+    paddingHorizontal: 6,
+  },
+  unreadCount: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+  divider: {
+    backgroundColor: '#333',
+    height: 0.5,
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 32,
+    paddingBottom: 40,
+    paddingTop: 100,
+  },
+  emptyTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    marginTop: 16,
+  },
+  emptySubtitle: {
+    fontSize: 16,
+    color: '#999',
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 24,
+  },
+  newChatButton: {
+    marginTop: 16,
+    backgroundColor: '#3B82F6',
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
-  },
-  emptyText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-    marginTop: 16,
-    marginBottom: 24,
+    padding: 24,
   },
   errorText: {
-    color: '#999',
     fontSize: 16,
+    color: '#FF3B30',
     textAlign: 'center',
-    marginTop: 16,
-    marginBottom: 24,
-    paddingHorizontal: 20,
+    marginBottom: 8,
   },
-  startChatButton: {
-    backgroundColor: '#3B82F6',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 10,
-  },
-  startChatButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  listContainer: {
-    padding: 16,
-  },
-  channelItem: {
+  // Tab Bar styles - Matches the Tabs.js navigator
+  tabBar: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1A1A1A',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    backgroundColor: '#141414',
+    borderTopWidth: 0,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1, 
+    shadowRadius: 4,
+    elevation: 10,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
   },
-  avatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-  },
-  channelInfo: {
+  tabItem: {
     flex: 1,
-    marginLeft: 16,
-  },
-  channelNameRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  channelName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  messageTime: {
-    fontSize: 12,
-    color: '#888',
-    marginLeft: 8,
-  },
-  lastMessage: {
-    fontSize: 14,
-    color: '#999',
-  },
-  unreadMessage: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
-  unreadBadge: {
-    backgroundColor: '#3B82F6',
-    width: 20,
-    height: 20,
-    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 8,
+    paddingVertical: 8,
   },
-  unreadCount: {
-    color: '#FFFFFF',
+  tabLabel: {
     fontSize: 12,
-    fontWeight: 'bold',
-  }
+    fontWeight: '500',
+    color: '#999',
+    marginTop: 4,
+  },
 });
