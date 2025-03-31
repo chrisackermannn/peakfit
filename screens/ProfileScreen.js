@@ -329,7 +329,6 @@ const ProfileScreen = ({ navigation, route }) => {
       </Surface>
 
       {/* Settings Section */}
-<<<<<<< HEAD
       <TouchableOpacity style={styles.option} onPress={() => navigation.navigate('AccountSettings')}>
         <Text style={styles.optionText}>Account Settings</Text>
       </TouchableOpacity>
@@ -339,7 +338,6 @@ const ProfileScreen = ({ navigation, route }) => {
       <TouchableOpacity style={styles.option} onPress={() => navigation.navigate('Login')}>
         <Text style={[styles.optionText, { color: 'red' }]}>Log Out</Text>
       </TouchableOpacity>
-=======
       <Surface style={styles.shadowCard}>
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Settings</Text>
@@ -393,7 +391,6 @@ const ProfileScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         </View>
       </Surface>
->>>>>>> ad85fd6754a8b6ab0be63d01c9abed11d9eed838
     </ScrollView>
   );
 };
