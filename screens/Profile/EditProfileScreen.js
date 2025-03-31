@@ -3,12 +3,13 @@ import { View, Text, StyleSheet, Image, TextInput, TouchableOpacity, Alert, Acti
 import { Button } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
-import { getStorage, ref, uploadBytesResumable, getDownloadURL, uploadString } from 'firebase/storage';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db, storage } from '../../Firebase/firebaseConfig';
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { db } from '../../Firebase/firebaseConfig';
 import { useAuth } from '../../context/AuthContext';
 
 const defaultAvatar = require('../../assets/default-avatar.png');
+const MAX_IMAGE_SIZE = 3 * 1024 * 1024; // 3MB in bytes
 
 export default function EditProfileScreen({ navigation }) {
   const { user, updateUserProfile } = useAuth();
@@ -24,7 +25,7 @@ export default function EditProfileScreen({ navigation }) {
       requestPermissions();
     }
   }, []);
-
+  
   const requestPermissions = async () => {
     if (Platform.OS !== 'web') {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -37,147 +38,81 @@ export default function EditProfileScreen({ navigation }) {
       }
     }
   };
-
+  
   // Pick image from gallery
   const pickImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaType: 'photo',
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.6,
-        base64: true, // Request base64 data for web upload workaround
+        quality: 0.6, // Reduced quality for better performance
       });
       
-      if (!result.canceled && result.assets?.[0]?.uri) {
-        const selectedUri = result.assets[0].uri;
-        console.log("Image selected:", selectedUri);
-        setImageUri(selectedUri);
+      if (!result.canceled && result.assets?.[0]) {
+        setImageUri(result.assets[0].uri);
+        console.log("Image selected:", result.assets[0].uri);
       }
     } catch (error) {
-      console.error('Image picker error:', error);
+      console.log('Error selecting image:', error);
       Alert.alert('Error', 'Failed to select image');
     }
   };
-
-  // Use the direct upload method for simplicity and reliability
+  
+  // Upload image to Firebase Storage
   const uploadImage = async (uri) => {
+    if (!user?.uid) throw new Error('User not found');
+    
     try {
-      setLoading(true);
-      
-      // If URI is unchanged, skip upload
-      if (uri === user?.photoURL) {
-        console.log("Photo URL unchanged, skipping upload");
-        return uri;
-      }
-      
-      console.log("Starting image upload process...");
-      
-      // For web platform uploads - use a CORS friendly approach
-      if (Platform.OS === 'web') {
-        try {
-          // Create a unique filename based on userId and timestamp
-          const timestamp = Date.now();
-          const filename = `profile_${user.uid}_${timestamp}.jpg`;
-          const fullPath = `profilePics/${user.uid}/${filename}`;
-          
-          // Reference to where the file will be stored
-          const storageRef = ref(storage, fullPath);
-          
-          console.log(`Uploading to Firebase: ${fullPath}`);
-          
-          // Get base64 data from the image
-          // This approach bypasses the CORS issue by not making a fetch request
-          let base64Data;
-          
-          if (uri.startsWith('data:')) {
-            // The URI is already a base64 data URL
-            base64Data = uri.split(',')[1];
-          } else {
-            // Try to get the base64 from the picker result
-            // This requires setting base64: true in launchImageLibraryAsync options
-            const response = await fetch(uri);
-            const blob = await response.blob();
-            const reader = new FileReader();
-            
-            // Convert blob to base64
-            base64Data = await new Promise((resolve) => {
-              reader.onloadend = () => {
-                const base64String = reader.result;
-                resolve(base64String.split(',')[1]);
-              };
-              reader.readAsDataURL(blob);
-            });
-          }
-          
-          // Upload as base64 string - this avoids CORS issues
-          await uploadString(storageRef, base64Data, 'base64', {
-            contentType: 'image/jpeg',
-          });
-          
-          // Get download URL
-          const downloadURL = await getDownloadURL(storageRef);
-          console.log("Upload successful, download URL:", downloadURL);
-          return downloadURL;
-        }
-        catch (error) {
-          console.error("Web upload error:", error);
-          throw error;
-        }
-      }
-
-      // For native platforms
-      console.log("Starting native image upload...");
-      
-      // Check file size
-      const fileInfo = await FileSystem.getInfoAsync(uri);
-      if (fileInfo.size > 5 * 1024 * 1024) {
-        throw new Error('Image must be less than 5MB');
-      }
-      
-      // Get image data
+      // Create blob from URI
       const response = await fetch(uri);
       const blob = await response.blob();
       
-      // Create a unique filename
-      const timestamp = Date.now();
-      const filename = `profile_${user.uid}_${timestamp}.jpg`;
-      const fullPath = `profilePics/${user.uid}/${filename}`;
+      // Upload to Firebase Storage in the profilePics path to match rules
+      // Use the explicit bucket name to avoid CORS issues
+      const storage = getStorage(undefined, "gs://fir-basics-90f1d.firebasestorage.app");
+      const filename = `profile_${Date.now()}.jpg`;
+      const storageRef = ref(storage, `profilePics/${user.uid}/${filename}`);
       
-      // Reference to storage location
-      const storageRef = ref(storage, fullPath);
-      
-      // Set proper metadata for storage rules
+      // Add metadata with content-type to help with CORS issues
       const metadata = {
         contentType: 'image/jpeg',
-        customMetadata: {
-          userId: user.uid,
-          uploadedAt: new Date().toISOString()
-        }
+        cacheControl: 'public, max-age=31536000',
       };
       
-      console.log(`Uploading to: ${fullPath}`);
-      
-      // Upload with resumable support for mobile
-      const uploadTask = await uploadBytesResumable(storageRef, blob, metadata);
-      const downloadURL = await getDownloadURL(uploadTask.ref);
-      
-      console.log("Upload successful, URL:", downloadURL);
-      return downloadURL;
-    }
-    catch (error) {
-      console.error("Image upload failed:", error);
-      
-      // Provide a fallback link if image upload fails
-      // Return user's existing photo URL or default image URL
-      console.log("Using fallback URL due to upload failure");
-      return user.photoURL || null;
-    }
-    finally {
-      setLoading(false);
+      // Upload the image with metadata
+      return new Promise((resolve, reject) => {
+        const uploadTask = uploadBytesResumable(storageRef, blob, metadata);
+        
+        uploadTask.on(
+          'state_changed',
+          (snapshot) => {
+            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+            console.log(`Upload is ${progress}% done`);
+          },
+          (error) => {
+            console.error('Upload error:', error);
+            reject(error);
+          },
+          async () => {
+            try {
+              // Get download URL of the uploaded image
+              const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+              console.log('Profile image uploaded successfully. URL:', downloadURL);
+              resolve(downloadURL);
+            } catch (error) {
+              console.error('Error getting download URL:', error);
+              reject(error);
+            }
+          }
+        );
+      });
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      throw error;
     }
   };
-
+  
   // Validate form inputs
   const validateForm = () => {
     if (!username.trim()) {
@@ -197,41 +132,55 @@ export default function EditProfileScreen({ navigation }) {
     
     return true;
   };
-
-  // Update profile data in Firestore and Auth
+  
+  // Update profile data
   const updateProfileData = async (photoURL) => {
     try {
-      console.log(`Updating profile with photo URL: ${photoURL}`);
-      
-      // First, update Firestore document
+      // First, update Firestore doc
       const userRef = doc(db, 'users', user.uid);
       const updateData = {
         username: username.toLowerCase(),
         displayName: displayName || username,
         bio: bio || '',
-        photoURL: photoURL || null,
         updatedAt: new Date().toISOString()
       };
+      
+      // Add photoURL if it changed
+      if (photoURL && photoURL !== user.photoURL) {
+        updateData.photoURL = photoURL;
+      }
       
       await updateDoc(userRef, updateData);
       console.log("Firestore document updated successfully");
       
-      // Then update Auth profile
-      await updateUserProfile({
-        displayName: displayName || username,
-        photoURL: photoURL || null,
-        username: username.toLowerCase(),
-        bio: bio || ''
-      });
+      // Update Auth profile
+      try {
+        // Create auth update object
+        const authUpdateData = {
+          displayName: displayName || username,
+          username: username.toLowerCase(),
+          bio: bio || ''
+        };
+        
+        // Add photoURL if it's a valid URL
+        if (photoURL && photoURL !== user.photoURL) {
+          authUpdateData.photoURL = photoURL;
+        }
+        
+        await updateUserProfile(authUpdateData);
+        console.log("Auth profile updated successfully");
+      } catch (authError) {
+        console.warn("Auth update warning (non-critical):", authError.message);
+        // Continue anyway since Firestore is the source of truth
+      }
       
-      console.log("Auth profile updated successfully");
       return true;
     } catch (error) {
       console.error('Profile update error:', error);
       throw error;
     }
   };
-
+  
   // Handle save button press
   const handleSave = async () => {
     if (!validateForm()) return;
@@ -244,12 +193,15 @@ export default function EditProfileScreen({ navigation }) {
       // Only process image if it has changed
       if (imageUri && imageUri !== user?.photoURL) {
         try {
+          console.log("Processing image upload...");
           photoURL = await uploadImage(imageUri);
-        } catch (error) {
-          console.error('Upload error:', error);
+          console.log("Image upload completed with URL:", photoURL);
+        } catch (uploadError) {
+          console.error('Upload error:', uploadError);
+          
           Alert.alert(
-            'Image Upload Error',
-            'Failed to upload profile picture. Do you want to continue with other profile changes?',
+            'Profile Picture Upload Failed',
+            'Could not upload profile picture. Continue with other changes?',
             [
               { text: 'Cancel', style: 'cancel', onPress: () => setLoading(false) },
               { 
@@ -257,19 +209,30 @@ export default function EditProfileScreen({ navigation }) {
                 onPress: async () => {
                   try {
                     await updateProfileData(user?.photoURL);
-                    Alert.alert('Profile Updated', 'Your profile was updated without changing the photo.');
-                    navigation.reset({
-                      index: 0,
-                      routes: [{ name: 'Profile', params: { forceRefresh: true } }]
-                    });
-                  } catch (err) {
-                    Alert.alert('Error', 'Failed to update profile.');
+                    Alert.alert(
+                      'Success',
+                      'Profile updated successfully (without new photo)!',
+                      [
+                        { 
+                          text: 'OK', 
+                          onPress: () => {
+                            navigation.reset({
+                              index: 0,
+                              routes: [{ name: 'Profile', params: { forceRefresh: true } }]
+                            });
+                          }
+                        }
+                      ]
+                    );
+                  } catch (error) {
+                    Alert.alert('Error', `Failed to update profile: ${error.message || 'Unknown error'}`);
                   } finally {
                     setLoading(false);
                   }
                 }
               }
-            ]
+            ],
+            { cancelable: false }
           );
           return;
         }
@@ -285,10 +248,10 @@ export default function EditProfileScreen({ navigation }) {
           { 
             text: 'OK', 
             onPress: () => {
-              // Use navigation reset to ensure we go back to Profile properly
+              // Reset the navigation to ensure a full refresh of Profile screen
               navigation.reset({
                 index: 0,
-                routes: [{ name: 'Profile', params: { forceRefresh: true } }]
+                routes: [{ name: 'Profile', params: { forceRefresh: true, timestamp: Date.now() } }]
               });
             }
           }
@@ -301,7 +264,7 @@ export default function EditProfileScreen({ navigation }) {
       setLoading(false);
     }
   };
-
+  
   if (!user) {
     return (
       <View style={styles.loadingContainer}>
@@ -309,7 +272,7 @@ export default function EditProfileScreen({ navigation }) {
       </View>
     );
   }
-
+  
   return (
     <View style={styles.container}>
       <TouchableOpacity style={styles.imageContainer} onPress={pickImage}>
@@ -364,10 +327,10 @@ export default function EditProfileScreen({ navigation }) {
           mode="contained"
           onPress={handleSave}
           loading={loading}
-          style={styles.saveButton}
           disabled={loading}
+          style={styles.saveButton}
         >
-          Save Changes
+          Save Profile
         </Button>
       </View>
     </View>
@@ -377,52 +340,57 @@ export default function EditProfileScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
-    padding: 20,
+    backgroundColor: '#0F0F0F',
+    alignItems: 'center',
+    paddingTop: 30,
   },
   imageContainer: {
-    alignItems: 'center',
-    marginVertical: 20,
     position: 'relative',
-    width: 150,
-    height: 150,
-    alignSelf: 'center',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    overflow: 'hidden',
+    marginBottom: 30,
+    backgroundColor: '#2A2A2A',
   },
   profileImage: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   editBadge: {
     position: 'absolute',
-    right: 0,
     bottom: 0,
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 12,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     paddingVertical: 6,
-    borderRadius: 15,
+    alignItems: 'center',
   },
   editBadgeText: {
-    color: '#fff',
+    color: '#FFF',
     fontSize: 12,
     fontWeight: '600',
   },
   form: {
-    flex: 1,
+    width: '90%',
+    maxWidth: 400,
   },
   inputContainer: {
     marginBottom: 20,
   },
   label: {
+    color: '#FFF',
     fontSize: 16,
-    fontWeight: '600',
     marginBottom: 8,
-    color: '#333',
+    fontWeight: '500',
   },
   input: {
-    backgroundColor: '#f5f5f5',
-    borderRadius: 10,
-    padding: 15,
+    backgroundColor: '#2A2A2A',
+    borderRadius: 8,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    color: '#FFF',
     fontSize: 16,
   },
   bioInput: {

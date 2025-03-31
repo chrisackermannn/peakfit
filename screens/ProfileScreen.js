@@ -1,9 +1,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, FlatList, ActivityIndicator, Platform, RefreshControl } from 'react-native';
-import { Button, Divider, Card, IconButton, Avatar } from 'react-native-paper';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  Image, 
+  TouchableOpacity, 
+  ScrollView, 
+  ActivityIndicator, 
+  Platform, 
+  RefreshControl 
+} from 'react-native';
+import { Button, Divider, Card, IconButton, Surface } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
 import { getStats, getUserWorkouts } from '../data/firebaseHelpers';
 import { format } from 'date-fns';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../Firebase/firebaseConfig';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 
@@ -17,38 +30,49 @@ const ProfileScreen = ({ navigation, route }) => {
   const [totalWeight, setTotalWeight] = useState(0);
   const [badges, setBadges] = useState([]);
   const [imageKey, setImageKey] = useState(Date.now());
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // Load data on initial mount when user exists
   useEffect(() => {
     if (user?.uid) {
       loadUserData();
+      checkAdminStatus();
     } else {
       setLoading(false);
     }
   }, [user]);
 
+  // Check admin status directly from Firestore
+  const checkAdminStatus = useCallback(async () => {
+    if (!user?.uid) return;
+    
+    try {
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        setIsAdmin(userData.isAdmin === true);
+        console.log("Admin status:", userData.isAdmin === true ? "Admin" : "Not admin");
+      }
+    } catch (error) {
+      console.error("Error checking admin status:", error);
+    }
+  }, [user?.uid]);
+
   // Handle navigation focus events (coming back from EditProfileScreen)
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
-      console.log("Screen focused, checking for refresh params");
-      
       if (route.params?.refresh || route.params?.forceRefresh) {
-        console.log("Refresh parameter detected, reloading data");
-        
         if (user?.uid) {
-          // Force image update by changing key
           setImageKey(Date.now());
-          // Load user data from firestore
           loadUserData();
+          checkAdminStatus();
         }
-        
-        // Clear the parameters to prevent unnecessary refreshes
         navigation.setParams({ refresh: undefined, forceRefresh: undefined });
       }
     });
     
     return unsubscribe;
-  }, [navigation, route.params]);
+  }, [navigation, route.params, user]);
 
   // Define loadUserData as a useCallback to avoid recreation on each render
   const loadUserData = useCallback(async () => {
@@ -56,6 +80,7 @@ const ProfileScreen = ({ navigation, route }) => {
     
     try {
       setLoading(true);
+      
       const [userStats, userWorkouts] = await Promise.all([
         getStats(user.uid),
         getUserWorkouts(user.uid)
@@ -76,7 +101,6 @@ const ProfileScreen = ({ navigation, route }) => {
       }
       
       setError(null);
-      // Update image key to force re-render of image component
       setImageKey(Date.now());
       
     } catch (err) {
@@ -118,20 +142,82 @@ const ProfileScreen = ({ navigation, route }) => {
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
     loadUserData();
-  }, [loadUserData]);
+    checkAdminStatus();
+  }, [loadUserData, checkAdminStatus]);
 
   // Handler function for edit profile button
   const handleEditProfile = useCallback(() => {
     navigation.navigate('EditProfile', { fromProfile: true });
   }, [navigation]);
+  
+  // Navigate to admin dashboard
+  const navigateToAdmin = useCallback(() => {
+    navigation.navigate('AdminDashboard');
+  }, [navigation]);
+
+  // Navigate to workout history
+  const navigateToWorkoutHistory = useCallback(() => {
+    navigation.navigate('WorkoutHistory');
+  }, [navigation]);
+
+  // Navigate to friends
+  const navigateToFriends = useCallback(() => {
+    navigation.navigate('Friends');
+  }, [navigation]);
 
   if (loading && !refreshing) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
+        <ActivityIndicator size="large" color="#3B82F6" />
       </View>
     );
   }
+
+  // Render a workout item
+  const renderWorkoutItem = (item, index) => (
+    <TouchableOpacity 
+      style={styles.workoutItem}
+      key={item.id || index}
+      onPress={() => navigation.navigate('WorkoutDetail', { workoutId: item.id })}
+    >
+      <View style={styles.workoutHeader}>
+        <MaterialCommunityIcons name="calendar" size={16} color="#999" />
+        <Text style={styles.workoutDate}>{formatDate(item.date)}</Text>
+      </View>
+      
+      <View style={styles.workoutDetails}>
+        <View style={styles.workoutStatsRow}>
+          <View style={styles.workoutStat}>
+            <MaterialCommunityIcons name="timer-outline" size={16} color="#3B82F6" />
+            <Text style={styles.workoutStatText}>
+              {formatDuration(item.duration)}
+            </Text>
+          </View>
+          
+          <View style={styles.workoutStat}>
+            <MaterialCommunityIcons name="dumbbell" size={16} color="#3B82F6" />
+            <Text style={styles.workoutStatText}>
+              {item.exercises.length} exercises
+            </Text>
+          </View>
+        </View>
+        
+        {item.exercises.slice(0, 2).map((exercise, exIndex) => (
+          <Text key={`${item.id}-ex-${exIndex}`} style={styles.exerciseItem}>
+            • {exercise.name}: {exercise.sets}×{exercise.reps} @ {exercise.weight}lbs
+          </Text>
+        ))}
+        
+        {item.exercises.length > 2 && (
+          <Text style={styles.moreExercises}>
+            +{item.exercises.length - 2} more exercises
+          </Text>
+        )}
+      </View>
+      
+      <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+    </TouchableOpacity>
+  );
 
   return (
     <ScrollView 
@@ -142,163 +228,108 @@ const ProfileScreen = ({ navigation, route }) => {
         <RefreshControl
           refreshing={refreshing}
           onRefresh={handleRefresh}
-          colors={['#007AFF']}
+          colors={['#3B82F6']}
         />
       }
     >
       {error && <Text style={styles.errorText}>{error}</Text>}
       
-      <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.avatarContainer}
-          onPress={handleEditProfile}
-        >
-          <Image
-            source={user?.photoURL ? { uri: user.photoURL + '?t=' + imageKey } : defaultAvatar}
-            style={styles.profileImage}
-            defaultSource={defaultAvatar}
-            key={`profile-image-${imageKey}`} 
-          />
-          <View style={styles.editBadge}>
-            <IconButton icon="pencil" size={16} color="#fff" />
+      {/* Profile Header */}
+      <Surface style={styles.shadowCard}>
+        <View style={styles.headerCard}>
+          <View style={styles.header}>
+            <TouchableOpacity 
+              style={styles.avatarContainer}
+              onPress={handleEditProfile}
+            >
+              <Image
+                source={user?.photoURL ? { uri: user.photoURL + '?t=' + imageKey } : defaultAvatar}
+                style={styles.profileImage}
+                defaultSource={defaultAvatar}
+                key={`profile-image-${imageKey}`} 
+              />
+              <View style={styles.editBadge}>
+                <MaterialCommunityIcons name="pencil" size={14} color="#FFF" />
+              </View>
+            </TouchableOpacity>
+
+            <View style={styles.userInfo}>
+              <Text style={styles.name}>{user?.displayName || user?.username || 'Anonymous'}</Text>
+              <Text style={styles.bio} numberOfLines={3}>{user?.bio || 'No bio yet'}</Text>
+              <Button
+                mode="outlined"
+                onPress={handleEditProfile}
+                style={styles.editButton}
+                labelStyle={{ color: '#3B82F6' }}
+                color="#3B82F6"
+              >
+                Edit Profile
+              </Button>
+            </View>
           </View>
-        </TouchableOpacity>
-
-        <View style={styles.userInfo}>
-          <Text style={styles.name}>{user?.displayName || user?.username || 'Anonymous'}</Text>
-          <Text style={styles.bio} numberOfLines={3}>{user?.bio || 'No bio yet'}</Text>
-          <Button
-            mode="outlined"
-            onPress={handleEditProfile}
-            style={styles.editButton}
-            labelStyle={{ color: '#007AFF' }}
-            color="#007AFF"
-          >
-            Edit Profile
-          </Button>
         </View>
-      </View>
+      </Surface>
 
+      {/* Stats Cards */}
       <View style={styles.statsContainer}>
-        <Card style={styles.statCard}>
-          <Text style={styles.statNumber}>{workouts.length}</Text>
-          <Text style={styles.statLabel}>Workouts</Text>
-        </Card>
-        
-        <Card style={styles.statCard}>
-          <Text style={styles.statNumber}>
-            {totalWeight.toLocaleString()}
-          </Text>
-          <Text style={styles.statLabel}>Total lbs Lifted</Text>
-        </Card>
-        
-        <Card style={styles.statCard}>
-          <Text style={styles.statNumber}>{badges.length}</Text>
-          <Text style={styles.statLabel}>Badges Earned</Text>
-        </Card>
-      </View>
-
-      <Divider style={styles.divider} />
-
-      {/* Measurements Section */}
-      {stats && stats.measurements && (
-        <View style={styles.measurementsContainer}>
-          <Text style={styles.sectionTitle}>Body Measurements</Text>
-          <View style={styles.measurementsGrid}>
-            <View style={styles.measurementBox}>
-              <Text style={styles.measurementValue}>
-                {stats.measurements.chest || '--'}"
-              </Text>
-              <Text style={styles.measurementLabel}>Chest</Text>
-            </View>
-            <View style={styles.measurementBox}>
-              <Text style={styles.measurementValue}>
-                {stats.measurements.waist || '--'}"
-              </Text>
-              <Text style={styles.measurementLabel}>Waist</Text>
-            </View>
-            <View style={styles.measurementBox}>
-              <Text style={styles.measurementValue}>
-                {stats.measurements.arms || '--'}"
-              </Text>
-              <Text style={styles.measurementLabel}>Arms</Text>
-            </View>
-            <View style={styles.measurementBox}>
-              <Text style={styles.measurementValue}>
-                {stats.measurements.legs || '--'}"
-              </Text>
-              <Text style={styles.measurementLabel}>Legs</Text>
-            </View>
+        <Surface style={styles.shadowCard}>
+          <View style={styles.statCard}>
+            <MaterialCommunityIcons name="dumbbell" size={28} color="#3B82F6" />
+            <Text style={styles.statNumber}>{workouts.length}</Text>
+            <Text style={styles.statLabel}>Workouts</Text>
           </View>
-        </View>
-      )}
+        </Surface>
+        
+        <Surface style={styles.shadowCard}>
+          <View style={styles.statCard}>
+            <MaterialCommunityIcons name="weight" size={28} color="#3B82F6" />
+            <Text style={styles.statNumber}>{Math.floor(totalWeight).toLocaleString()}</Text>
+            <Text style={styles.statLabel}>Total Weight</Text>
+          </View>
+        </Surface>
+        
+        <Surface style={styles.shadowCard}>
+          <View style={styles.statCard}>
+            <MaterialCommunityIcons name="trophy" size={28} color="#3B82F6" />
+            <Text style={styles.statNumber}>{badges.length}</Text>
+            <Text style={styles.statLabel}>Badges</Text>
+          </View>
+        </Surface>
+      </View>
 
       {/* Recent Workouts Section */}
-      <Divider style={styles.divider} />
-      <View style={styles.workoutsContainer}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent Workouts</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('WorkoutHistory')}>
-            <Text style={styles.seeAllText}>See All</Text>
-          </TouchableOpacity>
-        </View>
-
-        {workouts.length === 0 ? (
-          <View style={styles.emptyWorkouts}>
-            <Text style={styles.emptyText}>No workouts yet</Text>
-            <Button 
-              mode="contained" 
-              onPress={() => navigation.navigate('Workout')}
-              style={styles.startWorkoutButton}
-            >
-              Start a Workout
-            </Button>
+      <Surface style={styles.shadowCard}>
+        <View style={styles.sectionCard}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Recent Workouts</Text>
+            <TouchableOpacity onPress={navigateToWorkoutHistory}>
+              <Text style={styles.seeAllText}>See All</Text>
+            </TouchableOpacity>
           </View>
-        ) : (
-          <FlatList
-            data={workouts.slice(0, 3)} // Show only the 3 most recent workouts
-            keyExtractor={(item) => item.id}
-            scrollEnabled={false} // Prevent nested scrolling
-            renderItem={({ item }) => (
-              <Card style={styles.workoutCard}>
-                <Card.Content>
-                  <View style={styles.workoutHeader}>
-                    <View>
-                      <Text style={styles.workoutDate}>{formatDate(item.date)}</Text>
-                      <Text style={styles.workoutDuration}>
-                        {formatDuration(item.duration)} • {item.exercises.length} exercises
-                      </Text>
-                    </View>
-                    <IconButton 
-                      icon="chevron-right" 
-                      size={24}
-                      onPress={() => navigation.navigate('WorkoutDetail', { workoutId: item.id })}
-                      color="#007AFF"
-                    />
-                  </View>
-                  
-                  <View style={styles.exercisesList}>
-                    {item.exercises.slice(0, 2).map((exercise, index) => (
-                      <Text key={index} style={styles.exerciseItem}>
-                        • {exercise.name}: {exercise.sets} sets × {exercise.reps} reps @ {exercise.weight} lbs
-                      </Text>
-                    ))}
-                    {item.exercises.length > 2 && (
-                      <Text style={styles.moreExercises}>
-                        +{item.exercises.length - 2} more exercises
-                      </Text>
-                    )}
-                  </View>
-                </Card.Content>
-              </Card>
-            )}
-          />
-        )}
-      </View>
-
-      <Divider style={styles.divider} />
+          
+          {workouts.length === 0 ? (
+            <View style={styles.emptyState}>
+              <MaterialCommunityIcons name="dumbbell" size={40} color="#666" />
+              <Text style={styles.emptyStateText}>No workouts yet</Text>
+              <Button 
+                mode="contained" 
+                onPress={() => navigation.navigate('Workout')}
+                style={styles.actionButton}
+              >
+                Start a Workout
+              </Button>
+            </View>
+          ) : (
+            // Manually render workout items instead of using FlatList
+            <View>
+              {workouts.slice(0, 3).map((workout, index) => renderWorkoutItem(workout, index))}
+            </View>
+          )}
+        </View>
+      </Surface>
 
       {/* Settings Section */}
+<<<<<<< HEAD
       <TouchableOpacity style={styles.option} onPress={() => navigation.navigate('AccountSettings')}>
         <Text style={styles.optionText}>Account Settings</Text>
       </TouchableOpacity>
@@ -308,249 +339,288 @@ const ProfileScreen = ({ navigation, route }) => {
       <TouchableOpacity style={styles.option} onPress={() => navigation.navigate('Login')}>
         <Text style={[styles.optionText, { color: 'red' }]}>Log Out</Text>
       </TouchableOpacity>
+=======
+      <Surface style={styles.shadowCard}>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Settings</Text>
+          
+          {/* Friends Button */}
+          <TouchableOpacity 
+            style={styles.option}
+            onPress={navigateToFriends}
+          >
+            <View style={styles.optionContent}>
+              <MaterialCommunityIcons name="account-group" size={24} color="#3B82F6" />
+              <Text style={styles.optionText}>Friends</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.option}
+            onPress={handleEditProfile}
+          >
+            <View style={styles.optionContent}>
+              <MaterialCommunityIcons name="account-edit" size={24} color="#3B82F6" />
+              <Text style={styles.optionText}>Edit Profile</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+          </TouchableOpacity>
+          
+          {/* Admin Dashboard Button - Only shown if user is admin */}
+          {isAdmin && (
+            <TouchableOpacity 
+              style={styles.option}
+              onPress={navigateToAdmin}
+            >
+              <View style={styles.optionContent}>
+                <MaterialCommunityIcons name="shield-account" size={24} color="#3B82F6" />
+                <Text style={styles.optionText}>Admin Dashboard</Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+            </TouchableOpacity>
+          )}
+          
+          <TouchableOpacity 
+            style={styles.option}
+            onPress={logout}
+          >
+            <View style={styles.optionContent}>
+              <MaterialCommunityIcons name="logout" size={24} color="#FF3B30" />
+              <Text style={[styles.optionText, { color: '#FF3B30' }]}>Log Out</Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+          </TouchableOpacity>
+        </View>
+      </Surface>
+>>>>>>> ad85fd6754a8b6ab0be63d01c9abed11d9eed838
     </ScrollView>
   );
 };
 
-// Add badge calculation helper
-const calculateBadges = (totalWeight) => {
+// Add badge calculation helper function
+function calculateBadges(totalWeight) {
   const badges = [];
   
-  if (totalWeight >= 1000) badges.push({ id: '1k', name: '1,000 lbs Club' });
-  if (totalWeight >= 10000) badges.push({ id: '10k', name: '10,000 lbs Club' });
-  if (totalWeight >= 100000) badges.push({ id: '100k', name: '100,000 lbs Club' });
+  // Simple badge logic based on total weight lifted
+  if (totalWeight >= 1000) badges.push({ id: '1k', name: '1K Club' });
+  if (totalWeight >= 10000) badges.push({ id: '10k', name: '10K Club' });
+  if (totalWeight >= 50000) badges.push({ id: '50k', name: '50K Club' });
+  if (totalWeight >= 100000) badges.push({ id: '100k', name: '100K Club' });
   
   return badges;
-};
+}
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#0A0A0A',
   },
   contentContainer: {
     padding: 16,
+    paddingBottom: 32,
+  },
+  errorText: {
+    color: '#FF3B30',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#0A0A0A',
+  },
+  
+  // Shadow card for iOS compatibility
+  shadowCard: {
+    borderRadius: 16,
+    marginBottom: 16,
+    // Remove overflow here to fix the shadow issue
+  },
+  
+  // Profile header
+  headerCard: {
+    backgroundColor: '#141414',
+    borderRadius: 16,
+    padding: 16,
+    // Content inside Surface wrapped in View
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 24,
   },
   avatarContainer: {
     position: 'relative',
     marginRight: 16,
   },
   profileImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#e3f2fd',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      }
-    })
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 2,
+    borderColor: '#3B82F6',
   },
   editBadge: {
     position: 'absolute',
     right: -4,
     bottom: -4,
-    backgroundColor: '#007AFF',
+    backgroundColor: '#3B82F6',
     borderRadius: 12,
     width: 24,
     height: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
   },
   userInfo: {
     flex: 1,
   },
   name: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#FFF',
     marginBottom: 4,
   },
   bio: {
-    fontSize: 16,
-    color: '#666',
+    fontSize: 15,
+    color: '#999',
     marginBottom: 12,
-    lineHeight: 22,
+    lineHeight: 20,
   },
   editButton: {
-    borderColor: '#007AFF',
+    borderColor: '#3B82F6',
     borderRadius: 8,
+    alignSelf: 'flex-start',
   },
-  editButtonLabel: {
-    fontSize: 14,
-  },
+  
+  // Stats section
   statsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 24,
+    marginBottom: 16,
+    gap: 12,
   },
   statCard: {
     flex: 1,
-    marginHorizontal: 4,
     padding: 16,
     alignItems: 'center',
-    backgroundColor: '#e3f2fd',
-    borderRadius: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      }
-    })
+    backgroundColor: '#141414',
+    borderRadius: 16,
   },
   statNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#007AFF',
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFF',
+    marginTop: 8,
   },
   statLabel: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 13,
+    color: '#999',
     marginTop: 4,
   },
-  divider: { 
-    marginVertical: 15, 
-    height: 1, 
-    backgroundColor: '#ddd' 
-  },
-  measurementsContainer: { 
-    marginVertical: 10 
-  },
-  sectionTitle: { 
-    fontSize: 18, 
-    fontWeight: 'bold', 
-    marginBottom: 10 
-  },
-  measurementsGrid: { 
-    flexDirection: 'row', 
-    flexWrap: 'wrap', 
-    justifyContent: 'space-between' 
-  },
-  measurementBox: {
-    width: '48%', 
-    backgroundColor: '#e3f2fd',
-    padding: 15, 
-    borderRadius: 12, 
-    marginBottom: 10, 
-    alignItems: 'center',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      }
-    })
-  },
-  measurementValue: { 
-    fontSize: 18, 
-    fontWeight: 'bold' 
-  },
-  measurementLabel: { 
-    fontSize: 14, 
-    color: '#777', 
-    marginTop: 5 
-  },
-  option: { 
-    paddingVertical: 15, 
-    borderBottomWidth: 1, 
-    borderBottomColor: '#ddd' 
-  },
-  optionText: { 
-    fontSize: 16 
-  },
-  errorText: { 
-    color: 'red', 
-    textAlign: 'center', 
-    marginBottom: 10 
-  },
-  // Workout section styles
-  workoutsContainer: {
-    marginVertical: 10
+  
+  // Section cards
+  sectionCard: {
+    backgroundColor: '#141414',
+    borderRadius: 16,
+    padding: 16,
   },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 15
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFF',
+    marginBottom: 16,
   },
   seeAllText: {
-    color: '#007AFF',
-    fontSize: 16
+    color: '#3B82F6',
+    fontSize: 14,
+    fontWeight: '500',
   },
-  workoutCard: {
-    marginBottom: 15,
-    backgroundColor: '#e3f2fd',
+  
+  // Workout list
+  emptyState: {
+    alignItems: 'center',
+    padding: 24,
+  },
+  emptyStateText: {
+    color: '#999',
+    fontSize: 16,
+    marginVertical: 12,
+  },
+  actionButton: {
+    backgroundColor: '#3B82F6',
+    marginTop: 16,
+    borderRadius: 8,
+  },
+  workoutItem: {
+    backgroundColor: '#1A1A1A',
     borderRadius: 12,
-    elevation: 2,
+    padding: 16,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   workoutHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
+    alignItems: 'center',
+    marginBottom: 8,
   },
   workoutDate: {
-    fontSize: 16,
-    fontWeight: 'bold'
-  },
-  workoutDuration: {
     fontSize: 14,
-    color: '#666',
-    marginTop: 3
+    color: '#999',
+    marginLeft: 6,
   },
-  exercisesList: {
-    marginTop: 10
+  workoutDetails: {
+    flex: 1,
+  },
+  workoutStatsRow: {
+    flexDirection: 'row',
+    marginBottom: 10,
+  },
+  workoutStat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  workoutStatText: {
+    color: '#CCC',
+    fontSize: 14,
+    marginLeft: 4,
   },
   exerciseItem: {
+    color: '#DDD',
     fontSize: 14,
-    marginBottom: 5,
-    color: '#333'
+    marginBottom: 4,
   },
   moreExercises: {
-    fontSize: 14,
-    color: '#777',
+    color: '#999',
+    fontSize: 12,
     fontStyle: 'italic',
-    marginTop: 5
+    marginTop: 4,
   },
-  emptyWorkouts: {
-    padding: 20,
+  
+  // Options
+  option: {
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f9f9f9',
-    borderRadius: 10
+    justifyContent: 'space-between',
+    paddingVertical: 14,
   },
-  emptyText: {
+  optionContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  optionText: {
+    marginLeft: 12,
     fontSize: 16,
-    color: '#777',
-    marginBottom: 15
-  },
-  startWorkoutButton: {
-    backgroundColor: '#007AFF',
-    borderRadius: 8,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    color: '#FFF',
+    fontWeight: '500',
   },
 });
 

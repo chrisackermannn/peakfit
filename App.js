@@ -3,6 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider } from './context/AuthContext';
+import { MessageNotificationsProvider } from './context/MessageNotificationsContext';
 import LoginScreen from './screens/Auth/LoginScreen';
 import Tabs from './navigation/Tabs';
 import EditProfileScreen from './screens/Profile/EditProfileScreen';
@@ -10,6 +11,12 @@ import AccountSettingsScreen from './screens/Profile/AccountSettingsScreen';
 import PrivacySettingsScreen from './screens/Profile/PrivacySettingsScreen';
 import Welcome from './screens/Welcome';
 import { PaperProvider } from 'react-native-paper';
+import FlashMessage from "react-native-flash-message";
+import AdminScreen from './screens/AdminScreen';
+import UserProfileScreen from './screens/UserProfileScreen';
+import FriendsScreen from './screens/FriendsScreen';
+import MessagesScreen from './screens/MessagesScreen';
+import ChatConversationScreen from './screens/ChatConversationScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -77,6 +84,7 @@ function AppNavigator() {
         component={PrivacySettingsScreen} 
         options={{ title: 'Privacy Settings' }} 
       />
+<<<<<<< HEAD
       {/* <Stack.Screen 
         name="AccountInfo" 
         component={account_Info_Screen} 
@@ -87,6 +95,39 @@ function AppNavigator() {
           component={profile_Screen} 
           options={{ title: 'Profile Information' }} 
       /> */}
+=======
+      <Stack.Screen 
+        name="AdminDashboard" 
+        component={AdminScreen} 
+        options={{ 
+          title: 'Admin Dashboard',
+          headerStyle: {
+            backgroundColor: '#3B82F6',
+          },
+          headerTintColor: '#fff',
+        }} 
+      />
+      <Stack.Screen
+        name="UserProfile"
+        component={UserProfileScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen 
+        name="Friends" 
+        component={FriendsScreen} 
+        options={{ headerShown: false }} 
+      />
+      <Stack.Screen 
+        name="Messages" 
+        component={MessagesScreen} 
+        options={{ headerShown: false }} 
+      />
+      <Stack.Screen 
+        name="ChatConversation" 
+        component={ChatConversationScreen} 
+        options={{ headerShown: false }} 
+      />
+>>>>>>> ad85fd6754a8b6ab0be63d01c9abed11d9eed838
     </Stack.Navigator>
   );
 }
@@ -95,11 +136,16 @@ function AppNavigator() {
 export default function App() {
   return (
     <AuthProvider>
-      <PaperProvider>
-        <NavigationContainer>
-          <AppNavigator />
-        </NavigationContainer>
-      </PaperProvider>
+      <MessageNotificationsProvider>
+        <PaperProvider>
+          <>
+            <NavigationContainer>
+              <AppNavigator />
+            </NavigationContainer>
+            <FlashMessage position="top" />
+          </>
+        </PaperProvider>
+      </MessageNotificationsProvider>
     </AuthProvider>
   );
 }
