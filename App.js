@@ -84,18 +84,6 @@ function AppNavigator() {
         component={PrivacySettingsScreen} 
         options={{ title: 'Privacy Settings' }} 
       />
-<<<<<<< HEAD
-      {/* <Stack.Screen 
-        name="AccountInfo" 
-        component={account_Info_Screen} 
-        options={{ title: 'Account Information' }} 
-      />
-      <Stack.Screen 
-          name="Profile_Info" 
-          component={profile_Screen} 
-          options={{ title: 'Profile Information' }} 
-      /> */}
-=======
       <Stack.Screen 
         name="AdminDashboard" 
         component={AdminScreen} 
@@ -127,7 +115,6 @@ function AppNavigator() {
         component={ChatConversationScreen} 
         options={{ headerShown: false }} 
       />
->>>>>>> ad85fd6754a8b6ab0be63d01c9abed11d9eed838
     </Stack.Navigator>
   );
 }

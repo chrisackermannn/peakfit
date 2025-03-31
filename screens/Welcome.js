@@ -20,16 +20,17 @@ const Welcome = ({ navigation }) => {
 
     return (
         <ImageBackground 
-            source={{ uri: 'http://media.tumblr.com/tumblr_m9e6d99lpi1ro2d43.gif' }} 
+            source={require('../assets/daniel-apodaca-WdoQio6HPVA-unsplash.jpg')} 
             style={styles.background}
+            resizeMode="cover"
         >
             <View style={styles.container}>
-                <Text style={styles.title}>Welcome to PeakFit</Text>
+                <Text style={styles.title}>Achieve your goals with an efficient plan that adapts to your needs!</Text>
                 <TouchableOpacity 
                     style={styles.button} 
                     onPress={handleGetStarted}
                 >
-                    <Text style={styles.buttonText}>Get Started</Text>
+                    <Text style={styles.buttonText}>Let's Get Started!</Text>
                 </TouchableOpacity>
             </View>
         </ImageBackground>
@@ -38,37 +39,47 @@ const Welcome = ({ navigation }) => {
 
 const styles = StyleSheet.create({
     background: {
+        width: '100%',
+        height: '100%',
         flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
+        
     },
     container: {
         flex: 1,
-        justifyContent: 'center',
+        justifyContent: 'flex-end',
         alignItems: 'center',
         backgroundColor: 'rgba(0, 0, 0, 0)',
     },
     title: {
-        fontSize: 40,
+        fontSize: 16,
         color: '#fff',
         marginBottom: 20,
+        textAlign: 'center',
+        paddingHorizontal: 20,
+        width: '100%',
+        
     },
     button: {
-        position: 'absolute',
-        bottom: 20,
-        backgroundColor: '#65558F',
+        
+        bottom: 10,
+        backgroundColor: '#8C0410',
         paddingVertical: 20,
         paddingHorizontal: 20,
         borderRadius: 5,
-        width: 400,
+        width: 380,
+        height: 56,
         alignItems: 'center',
+        justifyContent: 'center',
         
         
     },
     buttonText: {
         color: '#fff',
         fontSize: 18,
+        textAlign: 'center',
     },
 });
 
 export default Welcome;
+/* Component 1 */
+
