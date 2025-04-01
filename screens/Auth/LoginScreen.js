@@ -314,11 +314,15 @@ export default function LoginScreen({ navigation }) {
           <View style={styles.logoSection}>
             <Surface style={styles.logoShadow}>
               <View style={styles.logoContainer}>
-                <MaterialCommunityIcons name="dumbbell" size={48} color="#3B82F6" />
+                <Image
+                  source={require('../../assets/Peakfit-06.png')}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="contain"
+                  alt="Logo"
+
+                />
               </View>
             </Surface>
-            <Text style={styles.appName}>PeakFit</Text>
-            <Text style={styles.tagline}>Your Personal Fitness Journey</Text>
           </View>
           
           <Surface style={styles.formShadow}>
@@ -467,7 +471,7 @@ export default function LoginScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
+    backgroundColor: '#F2F2F2',
   },
   backgroundContainer: {
     flex: 1,
@@ -499,10 +503,10 @@ const styles = StyleSheet.create({
     }),
   },
   logoContainer: {
-    width: 80,
-    height: 80,
+    width: 120,
+    height: 120,
     borderRadius: 24,
-    backgroundColor: '#141414',
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
