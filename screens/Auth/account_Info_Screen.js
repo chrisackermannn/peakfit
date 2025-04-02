@@ -17,24 +17,28 @@ const AccountInfoScreen = ({ navigation }) => {
     return (
         <ScrollView contentContainerStyle={styles.container}>
             <Text style={styles.title}>Account Information</Text>
-            <TextInput
-                style={styles.input}
-                placeholder="Name"
-                value={name}
-                onChangeText={setName}
-            />
-            <TextInput
-                style={styles.input}
-                placeholder="Last Name"
-                value={lastName}
-                onChangeText={setLastName}
-            />
+            <Text style={styles.subtitle}>Create an account to be able to log in your workouts.</Text>
+            <View style={styles.input_container}>
+                <TextInput
+                    style={styles.input}
+                    placeholder="Name"
+                    value={name}
+                    onChangeText={setName}
+                />
+                <TextInput
+                    style={styles.input}
+                    placeholder="Last Name"
+                    value={lastName}
+                    onChangeText={setLastName}
+                />
+            </View> 
             <TextInput
                 style={styles.input}
                 placeholder="Username"
                 value={username}
                 onChangeText={setUsername}
             />
+            
             <TextInput
                 style={styles.input}
                 placeholder="Email"
@@ -75,6 +79,7 @@ const styles = StyleSheet.create({
         fontSize: 24,
         fontWeight: 'bold',
         marginBottom: 20,
+        
     },
     input: {
         width: '100%',
@@ -83,6 +88,19 @@ const styles = StyleSheet.create({
         borderColor: '#ccc',
         borderRadius: 5,
         marginBottom: 15,
+    },
+    input_container: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+    },
+    input_name: {
+        width: '50%',
+        padding: 15,
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 5,
+        marginBottom: 15,
+
     },
     button: {
         backgroundColor: '#007AFF',

@@ -17,6 +17,7 @@ import UserProfileScreen from './screens/UserProfileScreen';
 import FriendsScreen from './screens/FriendsScreen';
 import MessagesScreen from './screens/MessagesScreen';
 import ChatConversationScreen from './screens/ChatConversationScreen';
+import AccountInfoScreen from './screens/Auth/account_Info_Screen';
 
 const Stack = createNativeStackNavigator();
 
@@ -68,6 +69,11 @@ function AppNavigator() {
         name="Tabs" 
         component={Tabs} 
         options={{ headerShown: false }} 
+      />
+      <Stack.Screen 
+      name="AccountInfo" 
+      component={AccountInfoScreen} 
+      options={{ title: 'Account Information' }} 
       />
       <Stack.Screen 
         name="EditProfile" 
