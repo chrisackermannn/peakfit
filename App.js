@@ -18,29 +18,15 @@ import FriendsScreen from './screens/FriendsScreen';
 import MessagesScreen from './screens/MessagesScreen';
 import ChatConversationScreen from './screens/ChatConversationScreen';
 import AccountInfoScreen from './screens/Auth/account_Info_Screen';
+import ProfileInfoScreen from './screens/Auth/profile_Info';
+import { TouchableOpacity } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 const Stack = createNativeStackNavigator();
 
 // Create a separate component for the navigation structure
 function AppNavigator() {
-    // const [isFirstLaunch, setIsFirstLaunch] = useState(null);
-
-    // useEffect(() => {
-    //   const checkFirstLaunch = async () => {
-    //     const hasLaunched = await AsyncStorage.getItem('hasLaunched');
-    //     if (hasLaunched === null) {
-    //       await AsyncStorage.setItem('hasLaunched', 'true');
-    //       setIsFirstLaunch(true);
-    //     } else {
-    //       setIsFirstLaunch(false);
-    //     }
-    //   };
-    //   checkFirstLaunch();
-    // }, []);
-
-    // if (isFirstLaunch === null) {
-    //   return null;
-    // }
+  
 
   return (
     <Stack.Navigator 
@@ -71,9 +57,28 @@ function AppNavigator() {
         options={{ headerShown: false }} 
       />
       <Stack.Screen 
-      name="AccountInfo" 
-      component={AccountInfoScreen} 
-      options={{ title: 'Account Information' }} 
+        name="AccountInfo" 
+        component={AccountInfoScreen} 
+        options={({ navigation }) => ({
+          title: 'Account Information',
+          headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.navigate('Login')} style={{ marginLeft: 10 }}>
+                  <MaterialCommunityIcons name="arrow-left" size={24} color="#007AFF" />
+              </TouchableOpacity>
+          ),
+        })}
+      />
+      <Stack.Screen
+        name="ProfileInfo"
+        component={ProfileInfoScreen}
+        options={({ navigation }) => ({
+          title: 'Profile Information',
+          headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.navigate('AccountInfo')} style={{ marginLeft: 10 }}>
+                  <MaterialCommunityIcons name="arrow-left" size={24} color="#007AFF" />
+              </TouchableOpacity>
+          ),
+        })}
       />
       <Stack.Screen 
         name="EditProfile" 

@@ -11,7 +11,7 @@ const AccountInfoScreen = ({ navigation }) => {
 
     const handleNext = () => {
         // Add validation and registration logic here
-        navigation.navigate('Profile_Info');
+        navigation.navigate('ProfileInfo');
     };
 
     return (
