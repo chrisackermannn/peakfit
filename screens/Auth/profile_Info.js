@@ -11,7 +11,13 @@ const ProfileInfoScreen = ({ navigation }) => {
 
     const handleNext = () => {
         // Add validation and registration logic here
-        navigation.navigate('ExerciseLevel');
+        if(Sex, height, weight, age, goal === '') {
+            alert('Please fill in all fields');
+            return;
+        }else{
+            navigation.navigate('ExerciseLevel');
+        }
+        
     };
     return (
         <ScrollView contentContainerStyle={styles.container}>
@@ -36,6 +42,9 @@ const ProfileInfoScreen = ({ navigation }) => {
                 
 
             </View>
+            <TouchableOpacity style={styles.button} onPress={handleNext}>
+                <Text style={styles.buttonText}>Next</Text>
+            </TouchableOpacity>
         </ScrollView>
 
     );
@@ -59,6 +68,10 @@ const styles = StyleSheet.create({
     },
     radioButton: {
         marginTop: 20,
+    },
+    buttonText: {
+        color: '#fff',
+        fontSize: 16,
     },
 });
 export default ProfileInfoScreen;

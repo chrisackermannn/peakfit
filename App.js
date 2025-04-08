@@ -21,6 +21,7 @@ import AccountInfoScreen from './screens/Auth/account_Info_Screen';
 import ProfileInfoScreen from './screens/Auth/profile_Info';
 import { TouchableOpacity } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import ExerciseLevelScreen from './screens/Auth/Exercise_Level';
 
 const Stack = createNativeStackNavigator();
 
@@ -75,6 +76,18 @@ function AppNavigator() {
           title: 'Profile Information',
           headerLeft: () => (
               <TouchableOpacity onPress={() => navigation.navigate('AccountInfo')} style={{ marginLeft: 10 }}>
+                  <MaterialCommunityIcons name="arrow-left" size={24} color="#007AFF" />
+              </TouchableOpacity>
+          ),
+        })}
+      />
+      <Stack.Screen
+        name="ExerciseLevel"
+        component={ExerciseLevelScreen}
+        options={({ navigation }) => ({
+          title: 'Exercise Level',
+          headerLeft: () => (
+              <TouchableOpacity onPress={() => navigation.navigate('ProfileInfo')} style={{ marginLeft: 10 }}>
                   <MaterialCommunityIcons name="arrow-left" size={24} color="#007AFF" />
               </TouchableOpacity>
           ),
