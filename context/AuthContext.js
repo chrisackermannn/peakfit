@@ -8,7 +8,6 @@ import React, { createContext, useState, useContext, useEffect } from 'react';
 import { auth, db } from '../Firebase/firebaseConfig'; // Import your Firebase auth instance
 import { onAuthStateChanged, updateProfile } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { disconnectUser } from '../utils/streamChat';
 
 const AuthContext = createContext(null);
 

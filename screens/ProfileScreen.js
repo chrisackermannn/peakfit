@@ -8,7 +8,8 @@ import {
   ScrollView, 
   ActivityIndicator, 
   Platform, 
-  RefreshControl 
+  RefreshControl, 
+  Alert 
 } from 'react-native';
 import { Button, Divider, Card, IconButton, Surface } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
@@ -17,11 +18,12 @@ import { format } from 'date-fns';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
+import { getAuth } from 'firebase/auth';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 
 const ProfileScreen = ({ navigation, route }) => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [stats, setStats] = useState({});
   const [workouts, setWorkouts] = useState([]);
   const [error, setError] = useState(null);
@@ -162,6 +164,40 @@ const ProfileScreen = ({ navigation, route }) => {
   const navigateToFriends = useCallback(() => {
     navigation.navigate('Friends');
   }, [navigation]);
+
+  const logout = () => {
+    const auth = getAuth();
+    
+    // Show confirmation dialog
+    Alert.alert(
+      "Logout",
+      "Are you sure you want to log out?",
+      [
+        {
+          text: "Cancel",
+          style: "cancel"
+        },
+        { 
+          text: "Logout", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await auth.signOut();
+              
+              // Navigate to LoginScreen
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+              });
+            } catch (error) {
+              console.error("Error signing out: ", error);
+              Alert.alert("Error", "Failed to sign out. Please try again.");
+            }
+          }
+        }
+      ]
+    );
+  };
 
   if (loading && !refreshing) {
     return (
@@ -374,7 +410,7 @@ const ProfileScreen = ({ navigation, route }) => {
           >
             <View style={styles.optionContent}>
               <MaterialCommunityIcons name="logout" size={24} color="#FF3B30" />
-              <Text style={[styles.optionText, { color: '#FF3B30' }]}>Log Out</Text>
+              <Text style={[styles.optionText, { color: '#FF3B30' }]}>Logout</Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
           </TouchableOpacity>

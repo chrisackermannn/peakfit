@@ -30,6 +30,14 @@
           <string>com.anonymous.PeakFit</string>
         </array>
       </dict>
+      <dict>
+        <key>CFBundleTypeRole</key>
+        <string>Editor</string>
+        <key>CFBundleURLSchemes</key>
+        <array>
+          <string>com.googleusercontent.apps.1074755682998-95lcclulfbq36di4do14imf2uvcrkaof</string>
+        </array>
+      </dict>
     </array>
     <key>CFBundleVersion</key>
     <string>1</string>
@@ -44,6 +52,10 @@
       <key>NSAllowsLocalNetworking</key>
       <true/>
     </dict>
+    <key>NSHealthShareUsageDescription</key>
+    <string>PeakFit needs access to your health data to track your workouts and fitness progress</string>
+    <key>NSHealthUpdateUsageDescription</key>
+    <string>PeakFit needs permission to save your workouts to the Health app</string>
     <key>UILaunchStoryboardName</key>
     <string>SplashScreen</string>
     <key>UIRequiredDeviceCapabilities</key>

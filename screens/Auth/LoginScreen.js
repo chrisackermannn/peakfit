@@ -33,11 +33,14 @@ import { StatusBar } from 'expo-status-bar';
 
 WebBrowser.maybeCompleteAuthSession();
 
-// Get redirect URI for current environment
+// Make sure you're using the correct redirect URI
 const redirectUri = makeRedirectUri({
-  scheme: 'peakfit',
-  path: 'auth'
+  scheme: "peakfit",
+  path: "auth"
 });
+
+// Log the URI to verify
+console.log("Redirect URI being used:", redirectUri);
 
 // Update these values with your actual Google client IDs
 const googleConfig = {
@@ -50,7 +53,7 @@ const googleConfig = {
 const { width, height } = Dimensions.get('window');
 
 export default function LoginScreen({ navigation }) {
-  // Configure Google Auth Request with proper platform-specific parameters
+  // Update Google Auth Request configuration
   const [request, response, promptAsync] = Google.useAuthRequest({
     clientId: Platform.select({
       ios: googleConfig.iosClientId,
@@ -64,8 +67,10 @@ export default function LoginScreen({ navigation }) {
     redirectUri,
     scopes: ['profile', 'email'],
     usePKCE: true,
-    // Only use this on iOS - important!
-    ...(Platform.OS === 'ios' ? { preferEphemeralSession: true } : {})
+    ...(Platform.OS === 'ios' ? { 
+      preferEphemeralSession: true,
+      shouldAutoExchangeCode: false
+    } : {})
   });
   
   const auth = getAuth();
@@ -215,33 +220,60 @@ export default function LoginScreen({ navigation }) {
     }
   };
   
+  // Replace your handleGoogleSignIn function with this one:
   const handleGoogleSignIn = async () => {
     try {
       setLoading(true);
       setError('');
       
-      // Configure special options for iOS
-      const options = Platform.OS === 'ios' ? { 
-        preferEphemeralSession: true,
-        showInRecents: true,
-      } : {};
+      console.log("Starting Google sign in with redirect URI:", redirectUri);
       
-      // Show auth prompt
-      const result = await promptAsync(options);
+      // Always use proxy auth when in Expo Go
+      const result = await promptAsync({
+        useProxy: true
+      });
       
-      // Handle result in useEffect to avoid race conditions
-      if (result.type !== 'success') {
-        if (result.type === 'cancel') {
-          setError('Sign in cancelled');
-        } else {
-          console.warn('Non-success result type:', result.type);
-          setError('Failed to sign in with Google');
+      console.log("Google auth result:", JSON.stringify(result, null, 2));
+      
+      if (result.type === 'success') {
+        // Get the ID token from the response
+        const idToken = result.authentication?.idToken || result.params?.id_token;
+        
+        if (!idToken) {
+          console.error("No ID token in response:", result);
+          setError('Authentication failed: No ID token received');
+          return;
         }
-        setLoading(false);
+        
+        // Create Firebase credential
+        const credential = GoogleAuthProvider.credential(idToken);
+        
+        try {
+          // Sign in to Firebase
+          const userCredential = await signInWithCredential(auth, credential);
+          const uid = userCredential.user.uid;
+          
+          // Check if user has a profile
+          const userDoc = await getDoc(doc(db, 'users', uid));
+          
+          if (!userDoc.exists() || !userDoc.data().username) {
+            setTempUserData(userCredential.user);
+            setShowUsernameModal(true);
+          } else {
+            navigation.replace('Tabs');
+          }
+        } catch (fbError) {
+          console.error("Firebase sign-in error:", fbError);
+          setError(fbError.message || 'Failed to authenticate with Firebase');
+        }
+      } else {
+        console.warn("Non-success result:", result);
+        setError('Sign in was canceled');
       }
     } catch (error) {
       console.error('Google Sign In Error:', error);
       setError('Failed to sign in with Google. Please try again.');
+    } finally {
       setLoading(false);
     }
   };

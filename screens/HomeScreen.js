@@ -27,6 +27,7 @@ import { db } from '../Firebase/firebaseConfig';
 import { format, addDays } from 'date-fns';
 import * as FileSystem from 'expo-file-system';
 import { searchUsers } from '../data/firebaseHelpers';
+import HealthStats from '../components/HealthStats';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 const { width, height } = Dimensions.get('window');
@@ -38,6 +39,7 @@ export default function HomeScreen() {
   const dates = [-3, -2, -1, 0, 1, 2, 3].map(diff => addDays(new Date(), diff));
   const [profileImage, setProfileImage] = useState(user?.photoURL || null);
   const flatListRef = useRef(null);
+  const scrollViewRef = useRef(null);
   
   // Search state
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -195,10 +197,10 @@ export default function HomeScreen() {
   
   // Scroll to bottom when messages change or chat expands
   useEffect(() => {
-    if (flatListRef.current && chatExpanded) {
+    if (scrollViewRef.current && chatExpanded) {
       // Wait briefly for layout before scrolling
       setTimeout(() => {
-        flatListRef.current.scrollToEnd({ animated: true });
+        scrollViewRef.current.scrollToEnd({ animated: true });
       }, 100);
     }
   }, [messages, chatExpanded]);
@@ -269,8 +271,8 @@ export default function HomeScreen() {
         useNativeDriver: false
       }).start(() => {
         // Scroll to bottom once expanded
-        if (flatListRef.current) {
-          flatListRef.current.scrollToEnd({ animated: true });
+        if (scrollViewRef.current) {
+          scrollViewRef.current.scrollToEnd({ animated: true });
         }
       });
     }
@@ -375,229 +377,234 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
       </View>
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Quick Actions */}
-        <View style={styles.actionsRow}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('Workout')}
-          >
-            <View style={[styles.actionBackground, styles.workoutActionBg]}>
-              <MaterialCommunityIcons name="dumbbell" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.actionText}>Start Workout</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('ChatAI')}
-          >
-            <View style={[styles.actionBackground, styles.aiActionBg]}>
-              <MaterialCommunityIcons name="robot" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.actionText}>AI Coach</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('Community')}
-          >
-            <View style={[styles.actionBackground, styles.communityActionBg]}>
-              <MaterialCommunityIcons name="account-group" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.actionText}>Community</Text>
-          </TouchableOpacity>
-        </View>
-        
-        {/* AI Chat Card - Collapsible */}
-        <Surface style={styles.cardShadow}>
-          <View style={styles.aiChatCard}>
-            <TouchableOpacity onPress={toggleChat} style={styles.aiChatHeader}>
-              <View style={styles.aiTitleArea}>
-                <MaterialCommunityIcons name="robot" size={24} color="#3B82F6" />
-                <Text style={styles.aiChatTitle}>AI Fitness Coach</Text>
+      
+      <View style={{flex: 1}}>
+        <FlatList
+          data={[1]} // Single item array as we just need one render
+          keyExtractor={() => 'main-content'}
+          renderItem={() => (
+            <View>
+              {/* Quick Actions */}
+              <View style={styles.actionsRow}>
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => navigation.navigate('Workout')}
+                >
+                  <View style={[styles.actionBackground, styles.workoutActionBg]}>
+                    <MaterialCommunityIcons name="dumbbell" size={24} color="#FFFFFF" />
+                  </View>
+                  <Text style={styles.actionText}>Start Workout</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => navigation.navigate('ChatAI')}
+                >
+                  <View style={[styles.actionBackground, styles.aiActionBg]}>
+                    <MaterialCommunityIcons name="robot" size={24} color="#FFFFFF" />
+                  </View>
+                  <Text style={styles.actionText}>AI Coach</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={styles.actionButton}
+                  onPress={() => navigation.navigate('Community')}
+                >
+                  <View style={[styles.actionBackground, styles.communityActionBg]}>
+                    <MaterialCommunityIcons name="account-group" size={24} color="#FFFFFF" />
+                  </View>
+                  <Text style={styles.actionText}>Community</Text>
+                </TouchableOpacity>
               </View>
-              <MaterialCommunityIcons
-                name={chatExpanded ? "chevron-up" : "chevron-down"}
-                size={24}
-                color="#666"
-              />
-            </TouchableOpacity>
-            
-            <Animated.View style={[styles.chatContainer, { height: chatHeight }]}>
-              <FlatList
-                ref={flatListRef}
-                data={messages}
-                renderItem={({ item }) => <MessageBubble message={item} />}
-                keyExtractor={item => item.id}
-                contentContainerStyle={styles.messagesContainer}
-                showsVerticalScrollIndicator={true}
-                initialNumToRender={10}
-                onLayout={() => {
-                  if (flatListRef.current) {
-                    flatListRef.current.scrollToEnd({ animated: false });
-                  }
-                }}
-              />
               
-              <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-              >
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.input}
-                    value={input}
-                    onChangeText={setInput}
-                    placeholder="Ask about workouts, nutrition..."
-                    placeholderTextColor="#666666"
-                    multiline
-                    maxLength={500}
-                    editable={!waitingForResponse}
-                  />
-                  <TouchableOpacity
-                    style={[
-                      styles.sendButton,
-                      (!input.trim() || waitingForResponse) && styles.sendButtonDisabled
-                    ]}
-                    onPress={sendMessage}
-                    disabled={!input.trim() || waitingForResponse}
-                  >
+              {/* AI Chat Card - Collapsible */}
+              <View style={styles.cardShadow}>
+                <Surface style={styles.aiChatCard}>
+                  <TouchableOpacity onPress={toggleChat} style={styles.aiChatHeader}>
+                    <View style={styles.aiTitleArea}>
+                      <MaterialCommunityIcons name="robot" size={24} color="#3B82F6" />
+                      <Text style={styles.aiChatTitle}>AI Fitness Coach</Text>
+                    </View>
                     <MaterialCommunityIcons
-                      name="send"
-                      size={20}
-                      color={input.trim() && !waitingForResponse ? "#FFFFFF" : "#666666"}
+                      name={chatExpanded ? "chevron-up" : "chevron-down"}
+                      size={24}
+                      color="#666"
                     />
                   </TouchableOpacity>
-                </View>
-              </KeyboardAvoidingView>
-            </Animated.View>
-          </View>
-        </Surface>
-        
-        {/* Steps API Coming Soon */}
-        <Surface style={styles.cardShadow}>
-          <View style={styles.stepsCard}>
-            <View style={styles.stepsHeader}>
-              <View style={styles.stepsIconContainer}>
-                <MaterialCommunityIcons name="shoe-print" size={24} color="#3B82F6" />
+                  
+                  <Animated.View style={[styles.chatContainer, { height: chatHeight }]}>
+                    <ScrollView
+                      ref={scrollViewRef}
+                      contentContainerStyle={styles.messagesContainer}
+                      showsVerticalScrollIndicator={true}
+                    >
+                      {messages.map(item => (
+                        <MessageBubble key={item.id} message={item} />
+                      ))}
+                    </ScrollView>
+                    
+                    <KeyboardAvoidingView
+                      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+                    >
+                      <View style={styles.inputContainer}>
+                        <TextInput
+                          style={styles.input}
+                          value={input}
+                          onChangeText={setInput}
+                          placeholder="Ask about workouts, nutrition..."
+                          placeholderTextColor="#666666"
+                          multiline
+                          maxLength={500}
+                          editable={!waitingForResponse}
+                        />
+                        <TouchableOpacity
+                          style={[
+                            styles.sendButton,
+                            (!input.trim() || waitingForResponse) && styles.sendButtonDisabled
+                          ]}
+                          onPress={sendMessage}
+                          disabled={!input.trim() || waitingForResponse}
+                        >
+                          <MaterialCommunityIcons
+                            name="send"
+                            size={20}
+                            color={input.trim() && !waitingForResponse ? "#FFFFFF" : "#666666"}
+                          />
+                        </TouchableOpacity>
+                      </View>
+                    </KeyboardAvoidingView>
+                  </Animated.View>
+                </Surface>
               </View>
-              <View style={styles.stepsInfo}>
-                <Text style={styles.stepsTitle}>Steps Tracker</Text>
-                <Text style={styles.stepsSubtitle}>Coming Soon</Text>
-              </View>
-            </View>
-            <View style={styles.stepsContent}>
-              <View style={styles.stepsMetric}>
-                <Text style={styles.stepsCount}>0</Text>
-                <Text style={styles.stepsLabel}>Steps Today</Text>
-              </View>
-              <View style={styles.stepsProgress}>
-                <View style={styles.stepsProgressBar}>
-                  <View style={[styles.stepsProgressFill, { width: '0%' }]} />
-                </View>
-                <Text style={styles.stepsGoal}>Goal: 10,000 steps</Text>
-              </View>
-            </View>
-          </View>
-        </Surface>
-        
-        {/* Add some padding at the bottom */}
-        <View style={{ height: 40 }} />
-      </ScrollView>
-      
-      {/* Search User Modal */}
-      <Modal
-        visible={showSearchModal}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setShowSearchModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Find Users</Text>
-              <IconButton
-                icon="close"
-                size={24}
-                color="#FFFFFF"
-                onPress={() => {
-                  setShowSearchModal(false);
-                  setSearchResults([]);
-                  setSearchQuery('');
-                }}
-              />
-            </View>
-            
-            <View style={styles.searchInputContainer}>
-              <MaterialCommunityIcons name="magnify" size={24} color="#999" style={styles.searchIcon} />
-              <TextInput
-                style={styles.searchInput}
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholder="Search by username..."
-                placeholderTextColor="#999"
-                autoCapitalize="none"
-                returnKeyType="search"
-                onSubmitEditing={handleSearch}
-              />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <MaterialCommunityIcons name="close-circle" size={20} color="#999" />
-                </TouchableOpacity>
-              )}
-            </View>
-            
-            <TouchableOpacity
-              style={[
-                styles.searchButton,
-                !searchQuery.trim() && styles.searchButtonDisabled
-              ]}
-              onPress={handleSearch}
-              disabled={!searchQuery.trim() || searching}
-            >
-              <Text style={styles.searchButtonText}>
-                {searching ? 'Searching...' : 'Search'}
-              </Text>
-            </TouchableOpacity>
-            
-            {/* Search Results */}
-            {searchResults.length > 0 ? (
-              <FlatList
-                data={searchResults}
-                keyExtractor={item => item.id}
-                style={styles.searchResultsList}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.userResultItem}
-                    onPress={() => {
-                      navigation.navigate('UserProfile', { userId: item.id });
-                      setShowSearchModal(false);
-                    }}
-                  >
-                    <Image
-                      source={item.photoURL ? { uri: item.photoURL } : defaultAvatar}
-                      style={styles.userResultAvatar}
-                    />
-                    <View style={styles.userResultInfo}>
-                      <Text style={styles.userResultName}>{item.displayName || item.username}</Text>
-                      <Text style={styles.userResultUsername}>@{item.username}</Text>
+              
+              {/* Steps API Coming Soon */}
+              {Platform.OS === 'ios' ? (
+                <HealthStats />
+              ) : (
+                <View style={styles.cardShadow}>
+                  <Surface style={styles.stepsCard}>
+                    <View style={styles.stepsHeader}>
+                      <View style={styles.stepsIconContainer}>
+                        <MaterialCommunityIcons name="shoe-print" size={24} color="#3B82F6" />
+                      </View>
+                      <View style={styles.stepsInfo}>
+                        <Text style={styles.stepsTitle}>Steps Tracker</Text>
+                        <Text style={styles.stepsSubtitle}>iOS Only</Text>
+                      </View>
                     </View>
-                    <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+                    <View style={styles.stepsContent}>
+                      <View style={styles.stepsMetric}>
+                        <Text style={styles.stepsCount}>0</Text>
+                        <Text style={styles.stepsLabel}>Feature only available on iOS</Text>
+                      </View>
+                    </View>
+                  </Surface>
+                </View>
+              )}
+              
+              {/* Add some padding at the bottom */}
+              <View style={{ height: 40 }} />
+              <HealthStats />
+            </View>
+          )}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContentContainer}
+        />
+        
+        {/* Search User Modal */}
+        <Modal
+          visible={showSearchModal}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setShowSearchModal(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Find Users</Text>
+                <IconButton
+                  icon="close"
+                  size={24}
+                  color="#FFFFFF"
+                  onPress={() => {
+                    setShowSearchModal(false);
+                    setSearchResults([]);
+                    setSearchQuery('');
+                  }}
+                />
+              </View>
+              
+              <View style={styles.searchInputContainer}>
+                <MaterialCommunityIcons name="magnify" size={24} color="#999" style={styles.searchIcon} />
+                <TextInput
+                  style={styles.searchInput}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Search by username..."
+                  placeholderTextColor="#999"
+                  autoCapitalize="none"
+                  returnKeyType="search"
+                  onSubmitEditing={handleSearch}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')}>
+                    <MaterialCommunityIcons name="close-circle" size={20} color="#999" />
                   </TouchableOpacity>
                 )}
-                ListEmptyComponent={
-                  <Text style={styles.noResultsText}>No users found</Text>
-                }
-              />
-            ) : searching ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#3B82F6" />
               </View>
-            ) : null}
+              
+              <TouchableOpacity
+                style={[
+                  styles.searchButton,
+                  !searchQuery.trim() && styles.searchButtonDisabled
+                ]}
+                onPress={handleSearch}
+                disabled={!searchQuery.trim() || searching}
+              >
+                <Text style={styles.searchButtonText}>
+                  {searching ? 'Searching...' : 'Search'}
+                </Text>
+              </TouchableOpacity>
+              
+              {/* Search Results */}
+              {searchResults.length > 0 ? (
+                <FlatList
+                  data={searchResults}
+                  keyExtractor={item => item.id}
+                  style={styles.searchResultsList}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.userResultItem}
+                      onPress={() => {
+                        navigation.navigate('UserProfile', { userId: item.id });
+                        setShowSearchModal(false);
+                      }}
+                    >
+                      <Image
+                        source={item.photoURL ? { uri: item.photoURL } : defaultAvatar}
+                        style={styles.userResultAvatar}
+                      />
+                      <View style={styles.userResultInfo}>
+                        <Text style={styles.userResultName}>{item.displayName || item.username}</Text>
+                        <Text style={styles.userResultUsername}>@{item.username}</Text>
+                      </View>
+                      <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+                    </TouchableOpacity>
+                  )}
+                  ListEmptyComponent={
+                    <Text style={styles.noResultsText}>No users found</Text>
+                  }
+                />
+              ) : searching ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#3B82F6" />
+                </View>
+              ) : null}
+            </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      </View>
     </SafeAreaView>
   );
 }
@@ -657,8 +664,8 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  scrollView: {
-    flex: 1,
+  scrollContentContainer: {
+    paddingBottom: 20,
   },
 
   // Modal styles

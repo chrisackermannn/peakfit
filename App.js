@@ -2,13 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native'; // Add this import
 import { AuthProvider } from './context/AuthContext';
 import { MessageNotificationsProvider } from './context/MessageNotificationsContext';
 import LoginScreen from './screens/Auth/LoginScreen';
 import Tabs from './navigation/Tabs';
 import EditProfileScreen from './screens/Profile/EditProfileScreen';
-import AccountSettingsScreen from './screens/Profile/AccountSettingsScreen';
-import PrivacySettingsScreen from './screens/Profile/PrivacySettingsScreen';
 import Welcome from './screens/Welcome';
 import { PaperProvider } from 'react-native-paper';
 import FlashMessage from "react-native-flash-message";
@@ -17,6 +16,7 @@ import UserProfileScreen from './screens/UserProfileScreen';
 import FriendsScreen from './screens/FriendsScreen';
 import MessagesScreen from './screens/MessagesScreen';
 import ChatConversationScreen from './screens/ChatConversationScreen';
+import HealthKitService from './services/HealthKitService';
 
 const Stack = createNativeStackNavigator();
 
@@ -35,6 +35,21 @@ function AppNavigator() {
         }
       };
       checkFirstLaunch();
+    }, []);
+
+    useEffect(() => {
+      async function initHealthKit() {
+        if (HealthKitService.isAvailable) {
+          try {
+            await HealthKitService.initialize();
+            console.log('HealthKit initialized successfully');
+          } catch (error) {
+            console.error('Failed to initialize HealthKit', error);
+          }
+        }
+      }
+      
+      initHealthKit();
     }, []);
 
     if (isFirstLaunch === null) {
@@ -75,16 +90,6 @@ function AppNavigator() {
         options={{ title: 'Edit Profile' }} 
       />
       <Stack.Screen 
-        name="AccountSettings" 
-        component={AccountSettingsScreen} 
-        options={{ title: 'Account Settings' }} 
-      />
-      <Stack.Screen 
-        name="PrivacySettings" 
-        component={PrivacySettingsScreen} 
-        options={{ title: 'Privacy Settings' }} 
-      />
-      <Stack.Screen 
         name="AdminDashboard" 
         component={AdminScreen} 
         options={{ 
@@ -121,6 +126,21 @@ function AppNavigator() {
 
 // Main App component
 export default function App() {
+  useEffect(() => {
+    if (Platform.OS === 'ios') {
+      const initHealthKit = async () => {
+        try {
+          await HealthKitService.initialize();
+          console.log('HealthKit initialized from App.js');
+        } catch (error) {
+          console.error('Failed to initialize HealthKit from App.js:', error);
+        }
+      };
+      
+      initHealthKit();
+    }
+  }, []);
+
   return (
     <AuthProvider>
       <MessageNotificationsProvider>
