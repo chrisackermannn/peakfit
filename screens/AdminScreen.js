@@ -9,7 +9,8 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
-  Modal
+  Modal,
+  Platform
 } from 'react-native';
 import { Surface, Button, IconButton, Divider } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -22,7 +23,8 @@ import {
   deleteDoc, 
   query, 
   orderBy,
-  where
+  where,
+  getDoc
 } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
 import { getUserWorkouts } from '../data/firebaseHelpers';
@@ -47,13 +49,37 @@ export default function AdminScreen({ navigation }) {
         navigation.replace('Login');
         return;
       }
-
+      
       try {
-        const userDoc = await getDocs(
-          query(collection(db, 'users'), where('uid', '==', user.uid), where('isAdmin', '==', true))
-        );
-
-        if (userDoc.empty) {
+        // CURRENT APPROACH - Checking only in admin collection with isAdmin field
+        // This is causing your access denied issue
+        
+        // NEW APPROACH - Check both collections like ProfileScreen does
+        console.log('Checking admin status for user:', user.uid);
+        
+        // Check in admin collection 
+        const adminRef = doc(db, 'admin', 'users');
+        const adminDoc = await getDoc(adminRef);
+        
+        // Check in users collection for isAdmin flag
+        const userRef = doc(db, 'users', user.uid);
+        const userDoc = await getDoc(userRef);
+        
+        const isAdminInAdminCollection = adminDoc.exists() && 
+          adminDoc.data().list?.includes(user.uid);
+        
+        const isAdminInUserCollection = userDoc.exists() && 
+          userDoc.data().isAdmin === true;
+        
+        // If either check passes, the user is an admin
+        const isAdmin = isAdminInAdminCollection || isAdminInUserCollection;
+        
+        console.log('Admin check in AdminScreen:');
+        console.log('- In admin collection:', isAdminInAdminCollection);
+        console.log('- In user document:', isAdminInUserCollection);
+        console.log('- Final result:', isAdmin);
+        
+        if (!isAdmin) {
           Alert.alert(
             'Access Denied',
             'You do not have admin privileges.',
@@ -223,83 +249,87 @@ export default function AdminScreen({ navigation }) {
     >
       <View style={styles.modalContainer}>
         <Surface style={styles.modalContent}>
-          {selectedUser && (
-            <>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>User Details</Text>
-                <IconButton
-                  icon="close"
-                  size={24}
-                  onPress={() => setModalVisible(false)}
-                />
-              </View>
-              
-              <View style={styles.userProfile}>
-                <Image
-                  source={selectedUser.photoURL ? { uri: selectedUser.photoURL } : defaultAvatar}
-                  style={styles.profileImage}
-                  defaultSource={defaultAvatar}
-                />
-                <View style={styles.profileInfo}>
-                  <Text style={styles.profileName}>{selectedUser.displayName || selectedUser.username || 'Anonymous'}</Text>
-                  <Text style={styles.profileUsername}>@{selectedUser.username || 'unknown'}</Text>
-                  <Text style={styles.profileEmail}>{selectedUser.email || 'No email'}</Text>
+          <View style={styles.contentWrapper}>
+            {selectedUser && (
+              <>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>User Details</Text>
+                  <IconButton
+                    icon="close"
+                    size={24}
+                    onPress={() => setModalVisible(false)}
+                  />
                 </View>
-              </View>
-              
-              <View style={styles.userBio}>
-                <Text style={styles.bioLabel}>Bio:</Text>
-                <Text style={styles.bioText}>{selectedUser.bio || 'No bio provided.'}</Text>
-              </View>
-              
-              <View style={styles.adminActions}>
-                <Button
-                  mode="contained"
-                  icon={selectedUser.isAdmin ? "shield-off" : "shield-account"}
-                  onPress={() => toggleAdminStatus(selectedUser.id, selectedUser.isAdmin)}
-                  style={[styles.actionButton, { backgroundColor: '#3B82F6' }]}
-                >
-                  {selectedUser.isAdmin ? "Remove Admin" : "Make Admin"}
-                </Button>
                 
-                <Button
-                  mode="contained"
-                  icon="delete"
-                  onPress={() => deleteUserAccount(selectedUser.id)}
-                  style={[styles.actionButton, { backgroundColor: '#FF3B30' }]}
-                >
-                  Delete Account
-                </Button>
-              </View>
-              
-              <Divider style={{ marginVertical: 16 }} />
-              
-              <Text style={styles.sectionTitle}>User Workouts</Text>
-              
-              {loadingWorkouts ? (
-                <ActivityIndicator size="large" color="#3B82F6" style={{ marginVertical: 20 }} />
-              ) : userWorkouts.length > 0 ? (
-                <FlatList
-                  data={userWorkouts}
-                  keyExtractor={item => item.id}
-                  style={styles.workoutsList}
-                  renderItem={({ item }) => (
-                    <Surface style={styles.workoutCard}>
-                      <Text style={styles.workoutTitle}>{item.name || 'Unnamed Workout'}</Text>
-                      <Text style={styles.workoutDate}>
-                        {new Date(item.date?.seconds * 1000 || Date.now()).toLocaleDateString()}
-                      </Text>
-                      <Text style={styles.exerciseCount}>
-                        {item.exercises?.length || 0} exercises
-                      </Text>
-                    </Surface>
-                  )}
-                />
-              ) : (
-                <Text style={styles.noWorkouts}>No workouts found for this user.</Text>
-              )}
-            </>
-          )}
+                <View style={styles.userProfile}>
+                  <Image
+                    source={selectedUser.photoURL ? { uri: selectedUser.photoURL } : defaultAvatar}
+                    style={styles.profileImage}
+                    defaultSource={defaultAvatar}
+                  />
+                  <View style={styles.profileInfo}>
+                    <Text style={styles.profileName}>{selectedUser.displayName || selectedUser.username || 'Anonymous'}</Text>
+                    <Text style={styles.profileUsername}>@{selectedUser.username || 'unknown'}</Text>
+                    <Text style={styles.profileEmail}>{selectedUser.email || 'No email'}</Text>
+                  </View>
+                </View>
+                
+                <View style={styles.userBio}>
+                  <Text style={styles.bioLabel}>Bio:</Text>
+                  <Text style={styles.bioText}>{selectedUser.bio || 'No bio provided.'}</Text>
+                </View>
+                
+                <View style={styles.adminActions}>
+                  <Button
+                    mode="contained"
+                    icon={selectedUser.isAdmin ? "shield-off" : "shield-account"}
+                    onPress={() => toggleAdminStatus(selectedUser.id, selectedUser.isAdmin)}
+                    style={[styles.actionButton, { backgroundColor: '#3B82F6' }]}
+                  >
+                    {selectedUser.isAdmin ? "Remove Admin" : "Make Admin"}
+                  </Button>
+                  
+                  <Button
+                    mode="contained"
+                    icon="delete"
+                    onPress={() => deleteUserAccount(selectedUser.id)}
+                    style={[styles.actionButton, { backgroundColor: '#FF3B30' }]}
+                  >
+                    Delete Account
+                  </Button>
+                </View>
+                
+                <Divider style={{ marginVertical: 16 }} />
+                
+                <Text style={styles.sectionTitle}>User Workouts</Text>
+                
+                {loadingWorkouts ? (
+                  <ActivityIndicator size="large" color="#3B82F6" style={{ marginVertical: 20 }} />
+                ) : userWorkouts.length > 0 ? (
+                  <FlatList
+                    data={userWorkouts}
+                    keyExtractor={item => item.id}
+                    style={styles.workoutsList}
+                    renderItem={({ item }) => (
+                      <Surface style={styles.workoutCard}>
+                        <View style={styles.contentWrapper}>
+                          <Text style={styles.workoutTitle}>{item.name || 'Unnamed Workout'}</Text>
+                          <Text style={styles.workoutDate}>
+                            {new Date(item.date?.seconds * 1000 || Date.now()).toLocaleDateString()}
+                          </Text>
+                          <Text style={styles.exerciseCount}>
+                            {item.exercises?.length || 0} exercises
+                          </Text>
+                        </View>
+                      </Surface>
+                    )}
+                  />
+                ) : (
+                  <Text style={styles.noWorkouts}>No workouts found for this user.</Text>
+                )}
+              </>
+            )}
+          </View>
         </Surface>
       </View>
     </Modal>
@@ -316,8 +346,10 @@ export default function AdminScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <Surface style={styles.headerCard}>
-        <Text style={styles.headerTitle}>Admin Dashboard</Text>
-        <Text style={styles.headerSubtitle}>Manage Users and Accounts</Text>
+        <View style={styles.contentWrapper}>
+          <Text style={styles.headerTitle}>Admin Dashboard</Text>
+          <Text style={styles.headerSubtitle}>Manage Users and Accounts</Text>
+        </View>
       </Surface>
 
       <View style={styles.searchContainer}>
@@ -384,11 +416,17 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      }
+    }),
   },
   searchIcon: {
     marginRight: 8,
@@ -569,5 +607,9 @@ const styles = StyleSheet.create({
     color: '#666',
     textAlign: 'center',
     marginVertical: 20,
-  }
+  },
+  contentWrapper: {
+    borderRadius: 12,
+    // No overflow property
+  },
 });

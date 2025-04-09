@@ -1,79 +1,101 @@
 import React from 'react';
-import { Platform, StyleSheet } from 'react-native'; 
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Platform } from 'react-native';
 import HomeScreen from '../screens/HomeScreen';
-import WorkoutScreen from '../screens/WorkoutScreen';
 import ProfileScreen from '../screens/ProfileScreen';
+import WorkoutScreen from '../screens/WorkoutScreen';
 import CommunityScreen from '../screens/Community';
+// Remove the import that's causing issues - you'll need the correct path
+// import ChatAIScreen from '../screens/ChatAI';
+import { triggerHaptic } from '../App';
 
 const Tab = createBottomTabNavigator();
 
 export default function Tabs() {
-  // Safe area insets for iOS
-  const bottomInset = Platform.OS === 'ios' ? 24 : 0;
+  // Function to handle tab press with haptic feedback
+  const handleTabPress = (e) => {
+    // Prevent default behavior
+    e.preventDefault();
+    
+    // Trigger haptic feedback
+    triggerHaptic('light');
+    
+    // Navigate to the screen
+    e.target.navigate(e.target.key.split('-')[0]);
+  };
 
   return (
     <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        tabBarIcon: ({ focused, color, size }) => {
-          let iconName;
-          
-          if (route.name === 'Home') {
-            iconName = focused ? 'home' : 'home-outline';
-          } else if (route.name === 'Workout') {
-            iconName = focused ? 'dumbbell' : 'dumbbell';
-          } else if (route.name === 'Profile') {
-            iconName = focused ? 'account' : 'account-outline';
-          } else if (route.name === 'Community') {
-            iconName = focused ? 'account-group' : 'account-group-outline';
-          }
-          
-          return <MaterialCommunityIcons name={iconName} size={24} color={color} />;
-        },
+      screenOptions={{
         tabBarActiveTintColor: '#3B82F6',
         tabBarInactiveTintColor: '#999',
-        tabBarShowLabel: true,
         tabBarStyle: {
-          backgroundColor: '#141414',
+          backgroundColor: '#121212',
           borderTopWidth: 0,
-          height: 60 + bottomInset,
-          paddingBottom: bottomInset,
-          paddingTop: 8,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: -4 },
-          shadowOpacity: 0.1,
-          shadowRadius: 4,
-          elevation: 10,
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
+          elevation: 0,
+          height: Platform.OS === 'ios' ? 90 : 60,
+          paddingBottom: Platform.OS === 'ios' ? 25 : 10,
+          paddingTop: 10,
         },
-        tabBarItemStyle: {
-          height: 60,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '500',
-          paddingBottom: 4,
-        },
-      })}
+        headerShown: false,
+      }}
     >
-      <Tab.Screen 
-        name="Home" 
-        component={HomeScreen} 
+      <Tab.Screen
+        name="Home"
+        component={HomeScreen}
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            triggerHaptic('light');
+          },
+        })}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="home" size={28} color={color} />
+          ),
+        }}
       />
-      <Tab.Screen 
-        name="Workout" 
-        component={WorkoutScreen} 
+      <Tab.Screen
+        name="Workout"
+        component={WorkoutScreen}
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            triggerHaptic('medium');
+          },
+        })}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="dumbbell" size={28} color={color} />
+          ),
+        }}
       />
-      <Tab.Screen 
-        name="Community" 
-        component={CommunityScreen} 
+      <Tab.Screen
+        name="Community"
+        component={CommunityScreen}
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            triggerHaptic('light');
+          },
+        })}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="account-group" size={28} color={color} />
+          ),
+        }}
       />
-      <Tab.Screen 
-        name="Profile" 
-        component={ProfileScreen} 
+      <Tab.Screen
+        name="Profile"
+        component={ProfileScreen}
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            triggerHaptic('light');
+          },
+        })}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="account" size={28} color={color} />
+          ),
+        }}
       />
     </Tab.Navigator>
   );

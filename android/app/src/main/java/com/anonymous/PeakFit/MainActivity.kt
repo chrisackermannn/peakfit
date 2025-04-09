@@ -1,4 +1,4 @@
-package com.peakfit
+package com.anonymous.PeakFit
 
 import android.os.Build
 import android.os.Bundle

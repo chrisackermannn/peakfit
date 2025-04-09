@@ -29,9 +29,9 @@ const CompletionModal = ({ visible, onDismiss, onSave, onPost, timer, workouts, 
     animationType="slide"
     onRequestClose={onDismiss}
   >
-    <View style={styles.completionModalContainer}>
+    <View style={styles.modalContainer}>
       <Surface style={styles.completionModalContent}>
-        <View style={{ overflow: 'hidden' }}>
+        <View style={styles.contentWrapper}>
           <Text style={styles.completionTitle}>Workout Complete! 🎉</Text>
           
           <View style={styles.workoutSummary}>
@@ -92,7 +92,7 @@ const TemplatesModal = ({ visible, onClose, templates, loading, onApplyTemplate 
     >
       <View style={styles.modalContainer}>
         <Surface style={styles.modalContent}>
-          <View style={{ overflow: 'hidden' }}>
+          <View style={styles.contentWrapper}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Workout Templates</Text>
               <IconButton
@@ -385,14 +385,16 @@ export default function WorkoutScreen({ navigation }) {
       Animated.sequence([
         Animated.timing(fadeAnim, {
           toValue: 1,
-          duration: 500,
-          useNativeDriver: true
+          duration: 300, // Faster animation for better responsiveness
+          useNativeDriver: true,
+          easing: Easing.out(Easing.ease) // Add easing for smoother feel
         }),
-        Animated.delay(1000),
+        Animated.delay(800), // Shorter delay
         Animated.timing(fadeAnim, {
-          toValue: 0, 
-          duration: 500,
-          useNativeDriver: true
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+          easing: Easing.in(Easing.ease)
         })
       ]).start();
       
@@ -444,14 +446,16 @@ export default function WorkoutScreen({ navigation }) {
       Animated.sequence([
         Animated.timing(fadeAnim, {
           toValue: 1,
-          duration: 500,
-          useNativeDriver: true
+          duration: 300, // Faster animation for better responsiveness
+          useNativeDriver: true,
+          easing: Easing.out(Easing.ease) // Add easing for smoother feel
         }),
-        Animated.delay(1000),
+        Animated.delay(800), // Shorter delay
         Animated.timing(fadeAnim, {
           toValue: 0,
-          duration: 500,
-          useNativeDriver: true
+          duration: 300,
+          useNativeDriver: true,
+          easing: Easing.in(Easing.ease)
         })
       ]).start();
       
@@ -710,102 +714,104 @@ export default function WorkoutScreen({ navigation }) {
       >
         <View style={styles.modalContainer}>
           <Surface style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {editingExercise ? 'Edit Exercise' : 'Add Exercise'}
-              </Text>
-              <IconButton
-                icon="close"
-                size={22}
-                color="#666"
-                onPress={() => setModalVisible(false)}
-              />
-            </View>
-            
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search exercises..."
-              value={searchQuery}
-              onChangeText={handleSearch}
-              placeholderTextColor="#666"
-            />
-            
-            {loadingExercises ? (
-              <ActivityIndicator size="large" color="#007AFF" style={{marginVertical: 20}} />
-            ) : (
-              <FlatList
-                data={filteredExercises}
-                keyExtractor={item => item.name}
-                renderItem={({item}) => (
-                  <TouchableOpacity
-                    style={[
-                      styles.exerciseItem,
-                      selectedExercise?.name === item.name && styles.selectedExercise
-                    ]}
-                    onPress={() => selectExercise(item)}
-                  >
-                    <Text style={styles.exerciseItemText}>{item.name}</Text>
-                  </TouchableOpacity>
-                )}
-                style={styles.exerciseList}
-                showsVerticalScrollIndicator={true}
-                nestedScrollEnabled={true}
-                maxToRenderPerBatch={10}
-                initialNumToRender={8}
-                windowSize={5}
-                contentContainerStyle={{paddingBottom: 12}}
-                ListEmptyComponent={
-                  <Text style={{color: '#999', textAlign: 'center', padding: 20}}>
-                    No exercises found. Try a different search.
-                  </Text>
-                }
-              />
-            )}
-            
-            <View style={styles.exerciseInputs}>
+            <View style={styles.contentWrapper}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>
+                  {editingExercise ? 'Edit Exercise' : 'Add Exercise'}
+                </Text>
+                <IconButton
+                  icon="close"
+                  size={22}
+                  color="#666"
+                  onPress={() => setModalVisible(false)}
+                />
+              </View>
+              
               <TextInput
-                style={styles.input}
-                placeholder="Weight (lbs)"
-                keyboardType="numeric"
-                value={weight}
-                onChangeText={setWeight}
+                style={styles.searchInput}
+                placeholder="Search exercises..."
+                value={searchQuery}
+                onChangeText={handleSearch}
                 placeholderTextColor="#666"
               />
-              <TextInput
-                style={styles.input}
-                placeholder="Reps"
-                keyboardType="numeric"
-                value={reps}
-                onChangeText={setReps}
-                placeholderTextColor="#666"
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Sets"
-                keyboardType="numeric"
-                value={sets}
-                onChangeText={setSets}
-                placeholderTextColor="#666"
-              />
-            </View>
-            
-            <View style={styles.modalActions}>
-              <Button
-                mode="contained"
-                onPress={addWorkout}
-                style={styles.modalButton}
-                contentStyle={styles.modalButtonContent}
-              >
-                {editingExercise ? 'Update Exercise' : 'Add Exercise'}
-              </Button>
-              <Button
-                mode="outlined"
-                onPress={() => setModalVisible(false)}
-                style={styles.modalCancelButton}
-                labelStyle={{ color: '#3B82F6' }}
-              >
-                Cancel
-              </Button>
+              
+              {loadingExercises ? (
+                <ActivityIndicator size="large" color="#007AFF" style={{marginVertical: 20}} />
+              ) : (
+                <FlatList
+                  data={filteredExercises}
+                  keyExtractor={item => item.name}
+                  renderItem={({item}) => (
+                    <TouchableOpacity
+                      style={[
+                        styles.exerciseItem,
+                        selectedExercise?.name === item.name && styles.selectedExercise
+                      ]}
+                      onPress={() => selectExercise(item)}
+                    >
+                      <Text style={styles.exerciseItemText}>{item.name}</Text>
+                    </TouchableOpacity>
+                  )}
+                  style={styles.exerciseList}
+                  showsVerticalScrollIndicator={true}
+                  nestedScrollEnabled={true}
+                  maxToRenderPerBatch={10}
+                  initialNumToRender={8}
+                  windowSize={5}
+                  contentContainerStyle={{paddingBottom: 12}}
+                  ListEmptyComponent={
+                    <Text style={{color: '#999', textAlign: 'center', padding: 20}}>
+                      No exercises found. Try a different search.
+                    </Text>
+                  }
+                />
+              )}
+              
+              <View style={styles.exerciseInputs}>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Weight (lbs)"
+                  keyboardType="numeric"
+                  value={weight}
+                  onChangeText={setWeight}
+                  placeholderTextColor="#666"
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Reps"
+                  keyboardType="numeric"
+                  value={reps}
+                  onChangeText={setReps}
+                  placeholderTextColor="#666"
+                />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Sets"
+                  keyboardType="numeric"
+                  value={sets}
+                  onChangeText={setSets}
+                  placeholderTextColor="#666"
+                />
+              </View>
+              
+              <View style={styles.modalActions}>
+                <Button
+                  mode="contained"
+                  onPress={addWorkout}
+                  style={styles.modalButton}
+                  contentStyle={styles.modalButtonContent}
+                >
+                  {editingExercise ? 'Update Exercise' : 'Add Exercise'}
+                </Button>
+                <Button
+                  mode="outlined"
+                  onPress={() => setModalVisible(false)}
+                  style={styles.modalCancelButton}
+                  labelStyle={{ color: '#3B82F6' }}
+                >
+                  Cancel
+                </Button>
+              </View>
             </View>
           </Surface>
         </View>
@@ -1590,5 +1596,10 @@ const styles = StyleSheet.create({
   modalCancelButton: {
     borderColor: '#3B82F6',
     borderWidth: 1,
+  },
+
+  contentWrapper: {
+    borderRadius: 16,
+    // No overflow property here
   }
 });

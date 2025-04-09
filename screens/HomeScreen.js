@@ -14,7 +14,8 @@ import {
   Dimensions,
   KeyboardAvoidingView,
   FlatList,
-  Modal
+  Modal,
+  Alert
 } from 'react-native';
 import { Surface, IconButton } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -28,6 +29,7 @@ import { format, addDays } from 'date-fns';
 import * as FileSystem from 'expo-file-system';
 import { searchUsers } from '../data/firebaseHelpers';
 import HealthStats from '../components/HealthStats';
+import { triggerHaptic } from '../App';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 const { width, height } = Dimensions.get('window');
@@ -52,6 +54,9 @@ export default function HomeScreen() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [waitingForResponse, setWaitingForResponse] = useState(false);
+  
+  // Define chatMaxHeight constant (this fixes the error)
+  const chatMaxHeight = 350; // Set a fixed height for the chat container
   
   // Animation values for collapsible chat
   const chatHeight = useRef(new Animated.Value(0)).current;
@@ -89,6 +94,8 @@ export default function HomeScreen() {
     const checkHistory = async () => {
       const snapshot = await getDocs(messagesQuery);
       if (snapshot.empty) {
+        setChatExpanded(true); // Auto-expand chat if no messages (new user)
+        chatHeight.setValue(chatMaxHeight); // Set initial height for animation
         setMessages([{
           id: 'welcome',
           role: 'assistant',
@@ -256,27 +263,36 @@ export default function HomeScreen() {
   
   // Toggle chat expansion
   const toggleChat = () => {
-    if (chatExpanded) {
-      // Collapse chat
-      Animated.timing(chatHeight, {
-        toValue: 0,
-        duration: 300,
-        useNativeDriver: false
-      }).start();
-    } else {
-      // Expand chat
-      Animated.timing(chatHeight, {
-        toValue: 340,
-        duration: 300,
-        useNativeDriver: false
-      }).start(() => {
-        // Scroll to bottom once expanded
-        if (scrollViewRef.current) {
-          scrollViewRef.current.scrollToEnd({ animated: true });
-        }
-      });
-    }
+    // Start height from its current position
+    const initialValue = chatExpanded ? chatMaxHeight : 0;
+    const finalValue = chatExpanded ? 0 : chatMaxHeight;
+    
+    // Set the current value immediately
+    chatHeight.setValue(initialValue);
+    
+    // Toggle state before animation
     setChatExpanded(!chatExpanded);
+    
+    // Add haptic feedback
+    if (Platform.OS === 'ios') {
+      triggerHaptic('light');
+    }
+    
+    // Run the animation
+    Animated.spring(chatHeight, {
+      toValue: finalValue,
+      useNativeDriver: false, // Height changes can't use native driver
+      friction: 8, // Higher friction = less oscillation
+      tension: 40, // Lower tension = slower but smoother
+      delay: 0,
+    }).start();
+    
+    // Scroll to bottom after animation if expanding
+    if (!chatExpanded && scrollViewRef.current) {
+      setTimeout(() => {
+        scrollViewRef.current.scrollToEnd({ animated: true });
+      }, 200);
+    }
   };
   
   // Search function
@@ -330,8 +346,8 @@ export default function HomeScreen() {
   };
   
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right']}>
-      <StatusBar barStyle="light-content" />
+    <SafeAreaView style={styles.container} edges={['top', 'right', 'left']}>
+      <StatusBar style="light" />
       
       {/* Header with Branding and Search Button */}
       <View style={styles.header}>
@@ -388,7 +404,13 @@ export default function HomeScreen() {
               <View style={styles.actionsRow}>
                 <TouchableOpacity
                   style={styles.actionButton}
-                  onPress={() => navigation.navigate('Workout')}
+                  onPress={() => {
+                    navigation.navigate('Workout');
+                    // Add haptic feedback
+                    if (Platform.OS === 'ios') {
+                      triggerHaptic('medium');
+                    }
+                  }}
                 >
                   <View style={[styles.actionBackground, styles.workoutActionBg]}>
                     <MaterialCommunityIcons name="dumbbell" size={24} color="#FFFFFF" />
@@ -398,7 +420,14 @@ export default function HomeScreen() {
                 
                 <TouchableOpacity
                   style={styles.actionButton}
-                  onPress={() => navigation.navigate('ChatAI')}
+                  onPress={() => {
+                    // Instead of navigating, toggle the AI chat component
+                    toggleChat();
+                    // Add haptic feedback
+                    if (Platform.OS === 'ios') {
+                      triggerHaptic('light');
+                    }
+                  }}
                 >
                   <View style={[styles.actionBackground, styles.aiActionBg]}>
                     <MaterialCommunityIcons name="robot" size={24} color="#FFFFFF" />
@@ -408,7 +437,12 @@ export default function HomeScreen() {
                 
                 <TouchableOpacity
                   style={styles.actionButton}
-                  onPress={() => navigation.navigate('Community')}
+                  onPress={() => {
+                    navigation.navigate('Community');
+                    if (Platform.OS === 'ios') {
+                      triggerHaptic('light');
+                    }
+                  }}
                 >
                   <View style={[styles.actionBackground, styles.communityActionBg]}>
                     <MaterialCommunityIcons name="account-group" size={24} color="#FFFFFF" />
@@ -419,62 +453,69 @@ export default function HomeScreen() {
               
               {/* AI Chat Card - Collapsible */}
               <View style={styles.cardShadow}>
-                <Surface style={styles.aiChatCard}>
-                  <TouchableOpacity onPress={toggleChat} style={styles.aiChatHeader}>
-                    <View style={styles.aiTitleArea}>
-                      <MaterialCommunityIcons name="robot" size={24} color="#3B82F6" />
-                      <Text style={styles.aiChatTitle}>AI Fitness Coach</Text>
-                    </View>
-                    <MaterialCommunityIcons
-                      name={chatExpanded ? "chevron-up" : "chevron-down"}
-                      size={24}
-                      color="#666"
-                    />
-                  </TouchableOpacity>
-                  
-                  <Animated.View style={[styles.chatContainer, { height: chatHeight }]}>
-                    <ScrollView
-                      ref={scrollViewRef}
-                      contentContainerStyle={styles.messagesContainer}
-                      showsVerticalScrollIndicator={true}
-                    >
-                      {messages.map(item => (
-                        <MessageBubble key={item.id} message={item} />
-                      ))}
-                    </ScrollView>
-                    
-                    <KeyboardAvoidingView
-                      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-                    >
-                      <View style={styles.inputContainer}>
-                        <TextInput
-                          style={styles.input}
-                          value={input}
-                          onChangeText={setInput}
-                          placeholder="Ask about workouts, nutrition..."
-                          placeholderTextColor="#666666"
-                          multiline
-                          maxLength={500}
-                          editable={!waitingForResponse}
-                        />
-                        <TouchableOpacity
-                          style={[
-                            styles.sendButton,
-                            (!input.trim() || waitingForResponse) && styles.sendButtonDisabled
-                          ]}
-                          onPress={sendMessage}
-                          disabled={!input.trim() || waitingForResponse}
-                        >
-                          <MaterialCommunityIcons
-                            name="send"
-                            size={20}
-                            color={input.trim() && !waitingForResponse ? "#FFFFFF" : "#666666"}
-                          />
-                        </TouchableOpacity>
+                <Surface style={styles.surface}>
+                  <View style={styles.aiChatCard}>
+                    <TouchableOpacity onPress={toggleChat} style={styles.aiChatHeader}>
+                      <View style={styles.aiTitleArea}>
+                        <MaterialCommunityIcons name="robot" size={24} color="#3B82F6" />
+                        <Text style={styles.aiChatTitle}>AI Fitness Coach</Text>
                       </View>
-                    </KeyboardAvoidingView>
-                  </Animated.View>
+                      <MaterialCommunityIcons
+                        name={chatExpanded ? "chevron-up" : "chevron-down"}
+                        size={24}
+                        color="#666"
+                      />
+                    </TouchableOpacity>
+                    
+                    <Animated.View style={[styles.chatContainer, { height: chatHeight }]}>
+                      <ScrollView
+                        ref={scrollViewRef}
+                        contentContainerStyle={styles.messagesContainer}
+                        showsVerticalScrollIndicator={true}
+                        onContentSizeChange={() => {
+                          if (scrollViewRef.current && chatExpanded) {
+                            scrollViewRef.current.scrollToEnd({ animated: false });
+                          }
+                        }}
+                      >
+                        {messages.map(item => (
+                          <MessageBubble key={item.id} message={item} />
+                        ))}
+                      </ScrollView>
+                      
+                      <KeyboardAvoidingView
+                        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+                      >
+                        <View style={styles.inputContainer}>
+                          <TextInput
+                            style={styles.input}
+                            value={input}
+                            onChangeText={setInput}
+                            placeholder="Ask about workouts, nutrition..."
+                            placeholderTextColor="#666666"
+                            multiline
+                            maxLength={500}
+                            editable={!waitingForResponse}
+                          />
+                          <TouchableOpacity
+                            style={[
+                              styles.sendButton,
+                              (!input.trim() || waitingForResponse) && styles.sendButtonDisabled
+                            ]}
+                            onPress={sendMessage}
+                            disabled={!input.trim() || waitingForResponse}
+                          >
+                            <MaterialCommunityIcons
+                              name="send"
+                              size={20}
+                              color={input.trim() && !waitingForResponse ? "#FFFFFF" : "#666666"}
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      </KeyboardAvoidingView>
+                    </Animated.View>
+                  </View>
                 </Surface>
               </View>
               
@@ -484,19 +525,21 @@ export default function HomeScreen() {
               ) : (
                 <View style={styles.cardShadow}>
                   <Surface style={styles.stepsCard}>
-                    <View style={styles.stepsHeader}>
-                      <View style={styles.stepsIconContainer}>
-                        <MaterialCommunityIcons name="shoe-print" size={24} color="#3B82F6" />
+                    <View style={styles.contentWrapper}>
+                      <View style={styles.stepsHeader}>
+                        <View style={styles.stepsIconContainer}>
+                          <MaterialCommunityIcons name="shoe-print" size={24} color="#3B82F6" />
+                        </View>
+                        <View style={styles.stepsInfo}>
+                          <Text style={styles.stepsTitle}>Steps Tracker</Text>
+                          <Text style={styles.stepsSubtitle}>iOS Only</Text>
+                        </View>
                       </View>
-                      <View style={styles.stepsInfo}>
-                        <Text style={styles.stepsTitle}>Steps Tracker</Text>
-                        <Text style={styles.stepsSubtitle}>iOS Only</Text>
-                      </View>
-                    </View>
-                    <View style={styles.stepsContent}>
-                      <View style={styles.stepsMetric}>
-                        <Text style={styles.stepsCount}>0</Text>
-                        <Text style={styles.stepsLabel}>Feature only available on iOS</Text>
+                      <View style={styles.stepsContent}>
+                        <View style={styles.stepsMetric}>
+                          <Text style={styles.stepsCount}>0</Text>
+                          <Text style={styles.stepsLabel}>Feature only available on iOS</Text>
+                        </View>
                       </View>
                     </View>
                   </Surface>
@@ -510,6 +553,12 @@ export default function HomeScreen() {
           )}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContentContainer}
+          initialNumToRender={5}
+          maxToRenderPerBatch={10}
+          updateCellsBatchingPeriod={50}
+          windowSize={5}
+          removeClippedSubviews={true}
+          scrollEventThrottle={16} // 60fps
         />
         
         {/* Search User Modal */}
@@ -521,86 +570,88 @@ export default function HomeScreen() {
         >
           <View style={styles.modalOverlay}>
             <View style={styles.modalContainer}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Find Users</Text>
-                <IconButton
-                  icon="close"
-                  size={24}
-                  color="#FFFFFF"
-                  onPress={() => {
-                    setShowSearchModal(false);
-                    setSearchResults([]);
-                    setSearchQuery('');
-                  }}
-                />
-              </View>
-              
-              <View style={styles.searchInputContainer}>
-                <MaterialCommunityIcons name="magnify" size={24} color="#999" style={styles.searchIcon} />
-                <TextInput
-                  style={styles.searchInput}
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  placeholder="Search by username..."
-                  placeholderTextColor="#999"
-                  autoCapitalize="none"
-                  returnKeyType="search"
-                  onSubmitEditing={handleSearch}
-                />
-                {searchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setSearchQuery('')}>
-                    <MaterialCommunityIcons name="close-circle" size={20} color="#999" />
-                  </TouchableOpacity>
-                )}
-              </View>
-              
-              <TouchableOpacity
-                style={[
-                  styles.searchButton,
-                  !searchQuery.trim() && styles.searchButtonDisabled
-                ]}
-                onPress={handleSearch}
-                disabled={!searchQuery.trim() || searching}
-              >
-                <Text style={styles.searchButtonText}>
-                  {searching ? 'Searching...' : 'Search'}
-                </Text>
-              </TouchableOpacity>
-              
-              {/* Search Results */}
-              {searchResults.length > 0 ? (
-                <FlatList
-                  data={searchResults}
-                  keyExtractor={item => item.id}
-                  style={styles.searchResultsList}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity
-                      style={styles.userResultItem}
-                      onPress={() => {
-                        navigation.navigate('UserProfile', { userId: item.id });
-                        setShowSearchModal(false);
-                      }}
-                    >
-                      <Image
-                        source={item.photoURL ? { uri: item.photoURL } : defaultAvatar}
-                        style={styles.userResultAvatar}
-                      />
-                      <View style={styles.userResultInfo}>
-                        <Text style={styles.userResultName}>{item.displayName || item.username}</Text>
-                        <Text style={styles.userResultUsername}>@{item.username}</Text>
-                      </View>
-                      <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+              <View style={styles.contentWrapper}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Find Users</Text>
+                  <IconButton
+                    icon="close"
+                    size={24}
+                    color="#FFFFFF"
+                    onPress={() => {
+                      setShowSearchModal(false);
+                      setSearchResults([]);
+                      setSearchQuery('');
+                    }}
+                  />
+                </View>
+                
+                <View style={styles.searchInputContainer}>
+                  <MaterialCommunityIcons name="magnify" size={24} color="#999" style={styles.searchIcon} />
+                  <TextInput
+                    style={styles.searchInput}
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    placeholder="Search by username..."
+                    placeholderTextColor="#999"
+                    autoCapitalize="none"
+                    returnKeyType="search"
+                    onSubmitEditing={handleSearch}
+                  />
+                  {searchQuery.length > 0 && (
+                    <TouchableOpacity onPress={() => setSearchQuery('')}>
+                      <MaterialCommunityIcons name="close-circle" size={20} color="#999" />
                     </TouchableOpacity>
                   )}
-                  ListEmptyComponent={
-                    <Text style={styles.noResultsText}>No users found</Text>
-                  }
-                />
-              ) : searching ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color="#3B82F6" />
                 </View>
-              ) : null}
+                
+                <TouchableOpacity
+                  style={[
+                    styles.searchButton,
+                    !searchQuery.trim() && styles.searchButtonDisabled
+                  ]}
+                  onPress={handleSearch}
+                  disabled={!searchQuery.trim() || searching}
+                >
+                  <Text style={styles.searchButtonText}>
+                    {searching ? 'Searching...' : 'Search'}
+                  </Text>
+                </TouchableOpacity>
+                
+                {/* Search Results */}
+                {searchResults.length > 0 ? (
+                  <FlatList
+                    data={searchResults}
+                    keyExtractor={item => item.id}
+                    style={styles.searchResultsList}
+                    renderItem={({ item }) => (
+                      <TouchableOpacity
+                        style={styles.userResultItem}
+                        onPress={() => {
+                          navigation.navigate('UserProfile', { userId: item.id });
+                          setShowSearchModal(false);
+                        }}
+                      >
+                        <Image
+                          source={item.photoURL ? { uri: item.photoURL } : defaultAvatar}
+                          style={styles.userResultAvatar}
+                        />
+                        <View style={styles.userResultInfo}>
+                          <Text style={styles.userResultName}>{item.displayName || item.username}</Text>
+                          <Text style={styles.userResultUsername}>@{item.username}</Text>
+                        </View>
+                        <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+                      </TouchableOpacity>
+                    )}
+                    ListEmptyComponent={
+                      <Text style={styles.noResultsText}>No users found</Text>
+                    }
+                  />
+                ) : searching ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#3B82F6" />
+                  </View>
+                ) : null}
+              </View>
             </View>
           </View>
         </Modal>
@@ -813,7 +864,6 @@ const styles = StyleSheet.create({
   cardShadow: {
     marginHorizontal: 20,
     marginBottom: 20,
-    borderRadius: 20,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -826,13 +876,16 @@ const styles = StyleSheet.create({
       }
     }),
   },
-
-  // AI Chat Card styles
+  surface: {
+    borderRadius: 20,
+  },
   aiChatCard: {
     backgroundColor: '#141414',
     borderRadius: 20,
-    overflow: 'hidden',
+    overflow: undefined, // Remove overflow: 'hidden'
   },
+
+  // AI Chat Card styles
   aiChatHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -893,19 +946,27 @@ const styles = StyleSheet.create({
   // Message bubble styles
   messageBubble: {
     marginBottom: 12,
-    padding: 12,
-    borderRadius: 16,
-    maxWidth: '85%',
+    padding: 14,
+    borderRadius: 18,
+    maxWidth: '80%',
   },
   userBubble: {
-    alignSelf: 'flex-end',
     backgroundColor: '#3B82F6',
     borderBottomRightRadius: 4,
+    alignSelf: 'flex-end',
   },
   assistantBubble: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#333333',
     borderBottomLeftRadius: 4,
+    alignSelf: 'flex-start',
+  },
+  userText: {
+    color: 'white',
+    fontSize: 16,
+  },
+  assistantText: {
+    color: 'white',
+    fontSize: 16,
   },
   assistantHeader: {
     flexDirection: 'row',
@@ -915,18 +976,8 @@ const styles = StyleSheet.create({
   assistantName: {
     color: '#FF3B30',
     fontSize: 12,
-    fontWeight: '600',
     marginLeft: 4,
-  },
-  userText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    lineHeight: 22,
-  },
-  assistantText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    lineHeight: 22,
+    fontWeight: '600',
   },
   
   // Steps card styles
@@ -1017,5 +1068,9 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 10,
     fontWeight: 'bold',
+  },
+  contentWrapper: {
+    borderRadius: 20,
+    // No overflow property
   },
 });

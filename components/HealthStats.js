@@ -1,6 +1,7 @@
 // components/HealthStats.js
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
+import { Surface } from 'react-native-paper'; // Add this import
 import HealthKitService from '../services/HealthKitService';
 
 export default function HealthStats() {
@@ -70,29 +71,33 @@ export default function HealthStats() {
   
   return (
     <View style={styles.container}>
-      <View style={styles.statCard}>
-        <Text style={styles.statTitle}>Today's Steps</Text>
-        <Text style={styles.statValue}>{steps?.toLocaleString() || '0'}</Text>
-        {error ? (
-          <Text style={styles.errorText}>{error}</Text>
-        ) : (
-          <>
-            <View style={styles.progressBar}>
-              <View 
-                style={[
-                  styles.progressFill, 
-                  { width: `${Math.min((steps / 10000) * 100, 100)}%` }
-                ]} 
-              />
-            </View>
-            <Text style={styles.statGoal}>Goal: 10,000 steps</Text>
-          </>
-        )}
-        {!HealthKitService.isAvailable && (
-          <Text style={styles.simulatorNote}>
-            Real data available on physical iOS device
-          </Text>
-        )}
+      <View style={styles.outerCard}>
+        <Surface style={styles.surface}>
+          <View style={styles.statCard}>
+            <Text style={styles.statTitle}>Today's Steps</Text>
+            <Text style={styles.statValue}>{steps?.toLocaleString() || '0'}</Text>
+            {error ? (
+              <Text style={styles.errorText}>{error}</Text>
+            ) : (
+              <>
+                <View style={styles.progressBar}>
+                  <View 
+                    style={[
+                      styles.progressFill, 
+                      { width: `${Math.min((steps / 10000) * 100, 100)}%` }
+                    ]} 
+                  />
+                </View>
+                <Text style={styles.statGoal}>Goal: 10,000 steps</Text>
+              </>
+            )}
+            {!HealthKitService.isAvailable && (
+              <Text style={styles.simulatorNote}>
+                Real data available on physical iOS device
+              </Text>
+            )}
+          </View>
+        </Surface>
       </View>
     </View>
   );
@@ -101,6 +106,22 @@ export default function HealthStats() {
 const styles = StyleSheet.create({
   container: {
     padding: 10,
+  },
+  outerCard: {
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 10,
+      },
+      android: {
+        elevation: 4,
+      }
+    }),
+  },
+  surface: {
+    borderRadius: 16,
   },
   statCard: {
     backgroundColor: '#1A1A1A',

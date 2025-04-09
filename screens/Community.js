@@ -461,29 +461,31 @@ const CommunityScreen = () => {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Save as Template</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="Enter template name"
-              placeholderTextColor="#999"
-              value={templateName}
-              onChangeText={setTemplateName}
-            />
-            <View style={styles.modalButtons}>
-              <Button
-                mode="text"
-                onPress={() => setTemplateNameModalVisible(false)}
-                style={styles.modalButton}
-              >
-                Cancel
-              </Button>
-              <Button
-                mode="contained"
-                onPress={saveWorkoutTemplate}
-                style={[styles.modalButton, styles.saveButton]}
-              >
-                Save
-              </Button>
+            <View style={styles.contentWrapper}>
+              <Text style={styles.modalTitle}>Save as Template</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Enter template name"
+                placeholderTextColor="#999"
+                value={templateName}
+                onChangeText={setTemplateName}
+              />
+              <View style={styles.modalButtons}>
+                <Button
+                  mode="text"
+                  onPress={() => setTemplateNameModalVisible(false)}
+                  style={styles.modalButton}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  mode="contained"
+                  onPress={saveWorkoutTemplate}
+                  style={[styles.modalButton, styles.saveButton]}
+                >
+                  Save
+                </Button>
+              </View>
             </View>
           </View>
         </View>
@@ -740,6 +742,9 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     backgroundColor: '#3B82F6',
+  },
+  contentWrapper: {
+    borderRadius: 16,
   }
 });
 

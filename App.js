@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native'; // Add this import
+import { Platform, LogBox, UIManager, Animated, InteractionManager } from 'react-native';
 import { AuthProvider } from './context/AuthContext';
 import { MessageNotificationsProvider } from './context/MessageNotificationsContext';
 import LoginScreen from './screens/Auth/LoginScreen';
@@ -17,6 +17,76 @@ import FriendsScreen from './screens/FriendsScreen';
 import MessagesScreen from './screens/MessagesScreen';
 import ChatConversationScreen from './screens/ChatConversationScreen';
 import HealthKitService from './services/HealthKitService';
+import * as Haptics from 'expo-haptics';
+
+// Enable layout animations for smoother transitions on Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+// Improve performance by tweaking JS thread timings
+InteractionManager.setDeadline(1000);
+
+// Create haptic feedback utility
+export const triggerHaptic = (type = 'light') => {
+  if (Platform.OS === 'ios') {
+    switch (type) {
+      case 'light':
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        break;
+      case 'medium':
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        break;
+      case 'heavy':
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        break;
+      case 'success':
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        break;
+      case 'error':
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        break;
+      case 'warning':
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        break;
+      default:
+        Haptics.selectionAsync();
+    }
+  }
+};
+
+// Ignore non-critical warnings to improve dev performance
+LogBox.ignoreLogs([
+  'VirtualizedLists should never be nested',
+  'Sending `onAnimatedValueUpdate` with no listeners registered',
+  'When setting overflow to hidden on Surface',
+  'HealthKit not available - using demo data',
+  'Admin status:',
+  'Property \'Surface\' doesn\'t exist',
+  'ReferenceError:',
+  'Animated: `useNativeDriver`',
+  'shadow* style props are deprecated',
+  'props.pointerEvents is deprecated',
+  'Property \'chatMaxHeight\' doesn\'t exist',
+  'Unbalanced calls start/end for tag',
+  'nw_connection_copy_connected_',
+  'Running "main" with',
+  'Client called nw_connection',
+  '🟢 Creating JS object'
+]);
+
+// Configure Animated API to use native driver by default
+if (Platform.OS === 'ios') {
+  Animated.timing = (function(originalTiming) {
+    return function(value, config) {
+      const updatedConfig = {
+        ...config,
+        useNativeDriver: config.useNativeDriver !== false
+      };
+      return originalTiming(value, updatedConfig);
+    };
+  })(Animated.timing);
+}
 
 const Stack = createNativeStackNavigator();
 
@@ -48,7 +118,6 @@ function AppNavigator() {
           }
         }
       }
-      
       initHealthKit();
     }, []);
 
