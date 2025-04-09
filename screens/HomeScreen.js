@@ -15,9 +15,10 @@ import {
   KeyboardAvoidingView,
   FlatList,
   Modal,
-  Alert
+  Alert,
+  Pressable,
 } from 'react-native';
-import { Surface, IconButton } from 'react-native-paper';
+import { Surface, IconButton, Divider } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
@@ -25,14 +26,19 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useAuth } from '../context/AuthContext';
 import { collection, query, onSnapshot, addDoc, serverTimestamp, limit, where, getDocs, orderBy } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
-import { format, addDays } from 'date-fns';
+import { format, addDays, isToday, isSameDay } from 'date-fns';
 import * as FileSystem from 'expo-file-system';
 import { searchUsers } from '../data/firebaseHelpers';
 import HealthStats from '../components/HealthStats';
 import { triggerHaptic } from '../App';
+import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 const { width, height } = Dimensions.get('window');
+
+// Create an Animated FlatList component
+const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
 
 export default function HomeScreen() {
   const navigation = useNavigation();
@@ -42,6 +48,7 @@ export default function HomeScreen() {
   const [profileImage, setProfileImage] = useState(user?.photoURL || null);
   const flatListRef = useRef(null);
   const scrollViewRef = useRef(null);
+  const insets = useSafeAreaInsets();
   
   // Search state
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -55,14 +62,22 @@ export default function HomeScreen() {
   const [input, setInput] = useState('');
   const [waitingForResponse, setWaitingForResponse] = useState(false);
   
-  // Define chatMaxHeight constant (this fixes the error)
-  const chatMaxHeight = 350; // Set a fixed height for the chat container
+  // Define chatMaxHeight constant
+  const chatMaxHeight = 350;
   
   // Animation values for collapsible chat
   const chatHeight = useRef(new Animated.Value(0)).current;
   
   // Unread messages state
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const [scrollY] = useState(new Animated.Value(0));
+  
+  // Header animation based on scroll
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, 60, 90],
+    outputRange: [0, 0.8, 1],
+    extrapolate: 'clamp'
+  });
   
   // Handle profile image safely on iOS
   useEffect(() => {
@@ -84,104 +99,39 @@ export default function HomeScreen() {
     const userChatRef = collection(db, 'userChats', user.uid, 'messages');
     
     // Query to get all messages ordered by timestamp
-    const messagesQuery = query(
-      userChatRef,
-      orderBy('timestamp', 'asc'),
-      limit(100) // Limit to prevent loading too many messages
-    );
+    const messagesQuery = query(userChatRef, orderBy('created_at', 'asc'));
     
-    // Set initial welcome message only if no history exists
-    const checkHistory = async () => {
-      const snapshot = await getDocs(messagesQuery);
-      if (snapshot.empty) {
-        setChatExpanded(true); // Auto-expand chat if no messages (new user)
-        chatHeight.setValue(chatMaxHeight); // Set initial height for animation
-        setMessages([{
-          id: 'welcome',
-          role: 'assistant',
-          content: "Hey there! I'm your fitness assistant. Ask me anything about workouts, nutrition, or exercise techniques.",
-          created_at: new Date()
-        }]);
-      }
-    };
-    
-    checkHistory();
-    
-    // Listen for changes in the chat history
     const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
-      const messageHistory = snapshot.docs.map(doc => {
+      const newMessages = snapshot.docs.map(doc => {
         const data = doc.data();
         return {
           id: doc.id,
-          role: data.role,
-          content: data.role === 'assistant' ? data.response : data.prompt,
-          created_at: data.timestamp?.toDate() || new Date()
+          ...data,
+          created_at: data.created_at ? new Date(data.created_at.seconds * 1000) : new Date()
         };
       });
       
-      if (messageHistory.length > 0) {
-        setMessages(messageHistory);
-        setWaitingForResponse(false);
-      }
+      setMessages(newMessages);
     });
     
-    return () => {
-      unsubscribe();
-    };
-  }, [user?.uid]);
-
-  // Listen for AI responses from Firestore
-  useEffect(() => {
-    if (!user?.uid) return;
-    const q = query(collection(db, 'generate'), limit(50));
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      querySnapshot.docChanges().forEach((change) => {
-        if (change.type === 'added' || change.type === 'modified') {
-          const data = change.doc.data();
-          // Only process responses for the current user
-          if (data.userId === user.uid && data.response && data.status?.state === "COMPLETED") {
-            // Update messages state to include the AI response
-            setMessages(prev => {
-              // Check if we already have this response
-              const isDuplicate = prev.some(
-                msg => msg.role === 'assistant' && msg.content === data.response
-              );
-              if (!isDuplicate) {
-                setWaitingForResponse(false);
-                return [
-                  ...prev.filter(msg => !msg.isLoading), // Remove loading indicators
-                  {
-                    id: `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                    role: 'assistant',
-                    content: data.response,
-                    created_at: new Date()
-                  }
-                ];
-              }
-              return prev;
-            });
-          }
-        }
-      });
-    });
     return () => unsubscribe();
   }, [user?.uid]);
   
   // Check for unread messages
   useEffect(() => {
     if (!user?.uid) return;
-    // Function to check for unread messages
+    
     const checkUnreadMessages = async () => {
       try {
-        const q = query(
-          collection(db, 'users', user.uid, 'chats'),
-          where('unreadCount', '>', 0)
-        );
-        const snapshot = await getDocs(q);
-        // Calculate total unread messages across all conversations
+        // Get all chats where the current user is a participant
+        const chatsRef = collection(db, 'users', user.uid, 'chats');
+        const chatsSnapshot = await getDocs(chatsRef);
+        
         let totalUnread = 0;
-        snapshot.forEach(doc => {
-          totalUnread += doc.data().unreadCount || 0;
+        chatsSnapshot.forEach(doc => {
+          const data = doc.data();
+          // Sum up unread counts
+          totalUnread += data.unreadCount || 0;
         });
         setUnreadMessages(totalUnread);
       } catch (error) {
@@ -339,49 +289,63 @@ export default function HomeScreen() {
     );
   };
   
-  const insets = useSafeAreaInsets();
-  
+  // Navigate to Messages screen
   const navigateToMessages = () => {
     navigation.navigate('Messages');
   };
   
-  return (
-    <SafeAreaView style={styles.container} edges={['top', 'right', 'left']}>
-      <StatusBar style="light" />
-      
-      {/* Header with Branding and Search Button */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.brandName}>PeakFit</Text>
-          <Text style={styles.welcomeText}>Welcome back,</Text>
-          <Text style={styles.nameText}>{user?.displayName || 'Fitness Pro'}</Text>
+  // Format date helper function
+  const formatDateForDisplay = (date) => {
+    if (isToday(date)) {
+      return 'Today';
+    }
+    
+    return format(date, 'EEE, MMM d');
+  };
+  
+  // Render date item for calendar
+  const renderDateItem = ({ item, index }) => {
+    const isSelected = isSameDay(selectedDate, item);
+    const isToday = isSameDay(new Date(), item);
+    
+    return (
+      <TouchableOpacity
+        style={[
+          styles.dateItem,
+          isSelected && styles.selectedDateItem,
+        ]}
+        onPress={() => {
+          setSelectedDate(item);
+          triggerHaptic('light');
+        }}
+      >
+        <View style={[
+          styles.dateItemInner,
+          isSelected ? styles.selectedDateItemInner : (isToday ? styles.todayDateItemInner : null)
+        ]}>
+          <Text style={[
+            styles.dateText,
+            isSelected && styles.selectedDateText
+          ]}>
+            {format(item, 'd')}
+          </Text>
+          <Text style={[
+            styles.dayText,
+            isSelected && styles.selectedDayText
+          ]}>
+            {format(item, 'EEE')}
+          </Text>
         </View>
-        <View style={styles.headerRight}>
-          {/* Messages Icon */}
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={navigateToMessages}
-          >
-            <MaterialCommunityIcons name="chat" size={24} color="#3B82F6" />
-            {unreadMessages > 0 && (
-              <View style={styles.notificationBadge}>
-                <Text style={styles.notificationText}>
-                  {unreadMessages > 9 ? '9+' : unreadMessages}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
-          
-          {/* Search Icon */}
-          <TouchableOpacity
-            style={styles.iconButton}
-            onPress={() => setShowSearchModal(true)}
-          >
-            <MaterialCommunityIcons name="account-search" size={24} color="#3B82F6" />
-          </TouchableOpacity>
-          
-          {/* Profile Icon */}
-          <TouchableOpacity
+      </TouchableOpacity>
+    );
+  };
+  
+  const renderMainContent = () => {
+    return (
+      <View style={styles.mainContentContainer}>
+        {/* Top Section with Profile & Date */}
+        <View style={styles.topSection}>
+          <TouchableOpacity 
             style={styles.profileButton}
             onPress={() => navigation.navigate('Profile')}
           >
@@ -391,215 +355,330 @@ export default function HomeScreen() {
               defaultSource={defaultAvatar}
             />
           </TouchableOpacity>
+          
+          <View style={styles.welcomeSection}>
+            <Text style={styles.greetingText}>Hello,</Text>
+            <Text style={styles.nameText}>{user?.displayName || 'Fitness Pro'}</Text>
+          </View>
+          
+          <View style={styles.iconButtonsRow}>
+            <TouchableOpacity
+              style={styles.iconButtonContainer}
+              onPress={navigateToMessages}
+            >
+              <LinearGradient
+                colors={['#2A2A2A', '#1A1A1A']}
+                style={styles.iconButton}
+              >
+                <MaterialCommunityIcons name="chat-outline" size={20} color="#FFFFFF" />
+                {unreadMessages > 0 && (
+                  <View style={styles.notificationBadge}>
+                    <Text style={styles.notificationText}>
+                      {unreadMessages > 9 ? '9+' : unreadMessages}
+                    </Text>
+                  </View>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.iconButtonContainer}
+              onPress={() => setShowSearchModal(true)}
+            >
+              <LinearGradient
+                colors={['#2A2A2A', '#1A1A1A']}
+                style={styles.iconButton}
+              >
+                <MaterialCommunityIcons name="account-search-outline" size={20} color="#FFFFFF" />
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
-      
-      <View style={{flex: 1}}>
-        <FlatList
-          data={[1]} // Single item array as we just need one render
-          keyExtractor={() => 'main-content'}
-          renderItem={() => (
-            <View>
-              {/* Quick Actions */}
-              <View style={styles.actionsRow}>
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => {
-                    navigation.navigate('Workout');
-                    // Add haptic feedback
-                    if (Platform.OS === 'ios') {
-                      triggerHaptic('medium');
-                    }
-                  }}
+        
+        {/* Date Selector */}
+        <View style={styles.dateContainer}>
+          <Text style={styles.dateTitle}>Select Date</Text>
+          <FlatList
+            ref={flatListRef}
+            data={dates}
+            renderItem={renderDateItem}
+            keyExtractor={(item) => item.toISOString()}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.dateList}
+            initialScrollIndex={3} // Start at today
+            getItemLayout={(data, index) => ({
+              length: 60,
+              offset: 60 * index,
+              index,
+            })}
+          />
+        </View>
+        
+        {/* Quick Actions Card */}
+        <View style={styles.actionsCard}>
+          <LinearGradient
+            colors={['#1A1A1A', '#121212']}
+            style={styles.actionsCardGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+          >
+            <Text style={styles.actionsCardTitle}>Quick Actions</Text>
+            
+            <View style={styles.actionsGrid}>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => {
+                  navigation.navigate('Workout');
+                  if (Platform.OS === 'ios') {
+                    triggerHaptic('medium');
+                  }
+                }}
+              >
+                <LinearGradient
+                  colors={['#3B82F6', '#2563EB']}
+                  style={styles.actionButtonGradient}
                 >
-                  <View style={[styles.actionBackground, styles.workoutActionBg]}>
-                    <MaterialCommunityIcons name="dumbbell" size={24} color="#FFFFFF" />
-                  </View>
-                  <Text style={styles.actionText}>Start Workout</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => {
-                    // Instead of navigating, toggle the AI chat component
-                    toggleChat();
-                    // Add haptic feedback
-                    if (Platform.OS === 'ios') {
-                      triggerHaptic('light');
-                    }
-                  }}
-                >
-                  <View style={[styles.actionBackground, styles.aiActionBg]}>
-                    <MaterialCommunityIcons name="robot" size={24} color="#FFFFFF" />
-                  </View>
-                  <Text style={styles.actionText}>AI Coach</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => {
-                    navigation.navigate('Community');
-                    if (Platform.OS === 'ios') {
-                      triggerHaptic('light');
-                    }
-                  }}
-                >
-                  <View style={[styles.actionBackground, styles.communityActionBg]}>
-                    <MaterialCommunityIcons name="account-group" size={24} color="#FFFFFF" />
-                  </View>
-                  <Text style={styles.actionText}>Community</Text>
-                </TouchableOpacity>
-              </View>
+                  <MaterialCommunityIcons name="dumbbell" size={24} color="#FFFFFF" />
+                </LinearGradient>
+                <Text style={styles.actionText}>Workout</Text>
+              </TouchableOpacity>
               
-              {/* AI Chat Card - Collapsible */}
-              <View style={styles.cardShadow}>
-                <Surface style={styles.surface}>
-                  <View style={styles.aiChatCard}>
-                    <TouchableOpacity onPress={toggleChat} style={styles.aiChatHeader}>
-                      <View style={styles.aiTitleArea}>
-                        <MaterialCommunityIcons name="robot" size={24} color="#3B82F6" />
-                        <Text style={styles.aiChatTitle}>AI Fitness Coach</Text>
-                      </View>
-                      <MaterialCommunityIcons
-                        name={chatExpanded ? "chevron-up" : "chevron-down"}
-                        size={24}
-                        color="#666"
-                      />
-                    </TouchableOpacity>
-                    
-                    <Animated.View style={[styles.chatContainer, { height: chatHeight }]}>
-                      <ScrollView
-                        ref={scrollViewRef}
-                        contentContainerStyle={styles.messagesContainer}
-                        showsVerticalScrollIndicator={true}
-                        onContentSizeChange={() => {
-                          if (scrollViewRef.current && chatExpanded) {
-                            scrollViewRef.current.scrollToEnd({ animated: false });
-                          }
-                        }}
-                      >
-                        {messages.map(item => (
-                          <MessageBubble key={item.id} message={item} />
-                        ))}
-                      </ScrollView>
-                      
-                      <KeyboardAvoidingView
-                        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-                      >
-                        <View style={styles.inputContainer}>
-                          <TextInput
-                            style={styles.input}
-                            value={input}
-                            onChangeText={setInput}
-                            placeholder="Ask about workouts, nutrition..."
-                            placeholderTextColor="#666666"
-                            multiline
-                            maxLength={500}
-                            editable={!waitingForResponse}
-                          />
-                          <TouchableOpacity
-                            style={[
-                              styles.sendButton,
-                              (!input.trim() || waitingForResponse) && styles.sendButtonDisabled
-                            ]}
-                            onPress={sendMessage}
-                            disabled={!input.trim() || waitingForResponse}
-                          >
-                            <MaterialCommunityIcons
-                              name="send"
-                              size={20}
-                              color={input.trim() && !waitingForResponse ? "#FFFFFF" : "#666666"}
-                            />
-                          </TouchableOpacity>
-                        </View>
-                      </KeyboardAvoidingView>
-                    </Animated.View>
-                  </View>
-                </Surface>
-              </View>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => {
+                  toggleChat();
+                  if (Platform.OS === 'ios') {
+                    triggerHaptic('light');
+                  }
+                }}
+              >
+                <LinearGradient
+                  colors={['#FF3B30', '#E11D48']}
+                  style={styles.actionButtonGradient}
+                >
+                  <MaterialCommunityIcons name="robot" size={24} color="#FFFFFF" />
+                </LinearGradient>
+                <Text style={styles.actionText}>AI Coach</Text>
+              </TouchableOpacity>
               
-              {/* Steps API Coming Soon */}
-              {Platform.OS === 'ios' ? (
-                <HealthStats />
-              ) : (
-                <View style={styles.cardShadow}>
-                  <Surface style={styles.stepsCard}>
-                    <View style={styles.contentWrapper}>
-                      <View style={styles.stepsHeader}>
-                        <View style={styles.stepsIconContainer}>
-                          <MaterialCommunityIcons name="shoe-print" size={24} color="#3B82F6" />
-                        </View>
-                        <View style={styles.stepsInfo}>
-                          <Text style={styles.stepsTitle}>Steps Tracker</Text>
-                          <Text style={styles.stepsSubtitle}>iOS Only</Text>
-                        </View>
-                      </View>
-                      <View style={styles.stepsContent}>
-                        <View style={styles.stepsMetric}>
-                          <Text style={styles.stepsCount}>0</Text>
-                          <Text style={styles.stepsLabel}>Feature only available on iOS</Text>
-                        </View>
-                      </View>
-                    </View>
-                  </Surface>
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => {
+                  navigation.navigate('Community');
+                  if (Platform.OS === 'ios') {
+                    triggerHaptic('light');
+                  }
+                }}
+              >
+                <LinearGradient
+                  colors={['#10B981', '#059669']}
+                  style={styles.actionButtonGradient}
+                >
+                  <MaterialCommunityIcons name="account-group" size={24} color="#FFFFFF" />
+                </LinearGradient>
+                <Text style={styles.actionText}>Community</Text>
+              </TouchableOpacity>
+            </View>
+          </LinearGradient>
+        </View>
+        
+        {/* AI Chat Card - Collapsible */}
+        <View style={styles.chatCardContainer}>
+          <LinearGradient
+            colors={['#1A1A1A', '#121212']}
+            style={styles.aiChatCard}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+          >
+            <TouchableOpacity 
+              onPress={toggleChat} 
+              style={styles.aiChatHeader}
+              activeOpacity={0.8}
+            >
+              <View style={styles.aiTitleArea}>
+                <LinearGradient
+                  colors={['#FF3B30', '#E11D48']}
+                  style={styles.aiIconBackground}
+                >
+                  <MaterialCommunityIcons name="robot" size={20} color="#FFFFFF" />
+                </LinearGradient>
+                <Text style={styles.aiChatTitle}>AI Fitness Coach</Text>
+              </View>
+              <MaterialCommunityIcons
+                name={chatExpanded ? "chevron-up" : "chevron-down"}
+                size={24}
+                color="#999"
+              />
+            </TouchableOpacity>
+            
+            <Animated.View style={[styles.chatContainer, { height: chatHeight }]}>
+              <ScrollView
+                ref={scrollViewRef}
+                contentContainerStyle={styles.messagesContainer}
+                showsVerticalScrollIndicator={false}
+                onContentSizeChange={() => {
+                  if (scrollViewRef.current && chatExpanded) {
+                    scrollViewRef.current.scrollToEnd({ animated: false });
+                  }
+                }}
+              >
+                {messages.map(item => (
+                  <MessageBubble key={item.id} message={item} />
+                ))}
+              </ScrollView>
+              
+              <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+              >
+                <View style={styles.inputContainer}>
+                  <TextInput
+                    style={styles.input}
+                    value={input}
+                    onChangeText={setInput}
+                    placeholder="Ask about fitness, nutrition..."
+                    placeholderTextColor="#888"
+                    multiline
+                    maxLength={500}
+                    editable={!waitingForResponse}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.sendButton,
+                      (!input.trim() || waitingForResponse) && styles.sendButtonDisabled
+                    ]}
+                    onPress={sendMessage}
+                    disabled={!input.trim() || waitingForResponse}
+                  >
+                    <MaterialCommunityIcons
+                      name="send"
+                      size={18}
+                      color={input.trim() && !waitingForResponse ? "#FFFFFF" : "#666"}
+                    />
+                  </TouchableOpacity>
                 </View>
-              )}
-              
-              {/* Add some padding at the bottom */}
-              <View style={{ height: 40 }} />
-              <HealthStats />
+              </KeyboardAvoidingView>
+            </Animated.View>
+          </LinearGradient>
+        </View>
+        
+        {/* Health Stats Section */}
+        <View style={styles.statsCardContainer}>
+          <Text style={styles.sectionTitle}>Health Stats</Text>
+          {Platform.OS === 'ios' ? (
+            <HealthStats />
+          ) : (
+            <View style={styles.cardContainer}>
+              <LinearGradient
+                colors={['#1A1A1A', '#121212']}
+                style={styles.statsCard}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0, y: 1 }}
+              >
+                <View style={styles.statsHeader}>
+                  <View style={styles.statsIconContainer}>
+                    <MaterialCommunityIcons name="shoe-print" size={22} color="#3B82F6" />
+                  </View>
+                  <View style={styles.statsInfo}>
+                    <Text style={styles.statsTitle}>Steps Tracker</Text>
+                    <Text style={styles.statsSubtitle}>iOS Only</Text>
+                  </View>
+                </View>
+                <View style={styles.statsContent}>
+                  <View style={styles.statsMetric}>
+                    <Text style={styles.statsCount}>0</Text>
+                    <Text style={styles.statsLabel}>Feature only available on iOS</Text>
+                  </View>
+                </View>
+              </LinearGradient>
             </View>
           )}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContentContainer}
-          initialNumToRender={5}
-          maxToRenderPerBatch={10}
-          updateCellsBatchingPeriod={50}
-          windowSize={5}
-          removeClippedSubviews={true}
-          scrollEventThrottle={16} // 60fps
-        />
-        
-        {/* Search User Modal */}
-        <Modal
-          visible={showSearchModal}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={() => setShowSearchModal(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
-              <View style={styles.contentWrapper}>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Find Users</Text>
-                  <IconButton
-                    icon="close"
-                    size={24}
-                    color="#FFFFFF"
-                    onPress={() => {
-                      setShowSearchModal(false);
-                      setSearchResults([]);
-                      setSearchQuery('');
-                    }}
-                  />
-                </View>
-                
+          
+          {/* Add some padding at the bottom */}
+          <View style={{ height: 40 }} />
+        </View>
+      </View>
+    );
+  };
+  
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'right', 'left']}>
+      <StatusBar style="light" />
+      
+      {/* Fixed Header with Animated Blur Effect */}
+      <Animated.View 
+        style={[
+          styles.fixedHeader,
+          { 
+            opacity: headerOpacity,
+            paddingTop: insets.top > 0 ? 0 : 8
+          }
+        ]}
+      >
+        <BlurView intensity={80} tint="dark" style={styles.blurHeader}>
+          <Text style={styles.headerTitle}>{formatDateForDisplay(selectedDate)}</Text>
+        </BlurView>
+      </Animated.View>
+      
+      {/* Main Content - Using Animated FlatList to fix the native driver issue */}
+      <AnimatedFlatList
+        data={[1]} // Single item array
+        keyExtractor={() => 'main-content'}
+        renderItem={renderMainContent}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true }
+        )}
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        bounces={true}
+      />
+      
+      {/* Search User Modal */}
+      <Modal
+        visible={showSearchModal}
+        animationType="fade"
+        transparent={true}
+        onRequestClose={() => setShowSearchModal(false)}
+      >
+        <BlurView intensity={30} tint="dark" style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Find Users</Text>
+                <TouchableOpacity
+                  style={styles.closeButton}
+                  onPress={() => {
+                    setShowSearchModal(false);
+                    setSearchResults([]);
+                    setSearchQuery('');
+                  }}
+                >
+                  <MaterialCommunityIcons name="close" size={24} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.searchContainer}>
                 <View style={styles.searchInputContainer}>
-                  <MaterialCommunityIcons name="magnify" size={24} color="#999" style={styles.searchIcon} />
+                  <MaterialCommunityIcons name="magnify" size={22} color="#888" style={styles.searchIcon} />
                   <TextInput
                     style={styles.searchInput}
                     value={searchQuery}
                     onChangeText={setSearchQuery}
                     placeholder="Search by username..."
-                    placeholderTextColor="#999"
+                    placeholderTextColor="#888"
                     autoCapitalize="none"
                     returnKeyType="search"
                     onSubmitEditing={handleSearch}
                   />
                   {searchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => setSearchQuery('')}>
-                      <MaterialCommunityIcons name="close-circle" size={20} color="#999" />
+                    <TouchableOpacity 
+                      onPress={() => setSearchQuery('')}
+                      hitSlop={{top: 15, left: 15, bottom: 15, right: 15}}
+                    >
+                      <MaterialCommunityIcons name="close-circle" size={18} color="#888" />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -612,50 +691,59 @@ export default function HomeScreen() {
                   onPress={handleSearch}
                   disabled={!searchQuery.trim() || searching}
                 >
-                  <Text style={styles.searchButtonText}>
-                    {searching ? 'Searching...' : 'Search'}
-                  </Text>
+                  <LinearGradient
+                    colors={['#3B82F6', '#2563EB']}
+                    style={styles.searchButtonGradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                  >
+                    <Text style={styles.searchButtonText}>
+                      {searching ? 'Searching...' : 'Search'}
+                    </Text>
+                  </LinearGradient>
                 </TouchableOpacity>
-                
-                {/* Search Results */}
-                {searchResults.length > 0 ? (
-                  <FlatList
-                    data={searchResults}
-                    keyExtractor={item => item.id}
-                    style={styles.searchResultsList}
-                    renderItem={({ item }) => (
-                      <TouchableOpacity
-                        style={styles.userResultItem}
-                        onPress={() => {
-                          navigation.navigate('UserProfile', { userId: item.id });
-                          setShowSearchModal(false);
-                        }}
-                      >
-                        <Image
-                          source={item.photoURL ? { uri: item.photoURL } : defaultAvatar}
-                          style={styles.userResultAvatar}
-                        />
-                        <View style={styles.userResultInfo}>
-                          <Text style={styles.userResultName}>{item.displayName || item.username}</Text>
-                          <Text style={styles.userResultUsername}>@{item.username}</Text>
-                        </View>
-                        <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
-                      </TouchableOpacity>
-                    )}
-                    ListEmptyComponent={
-                      <Text style={styles.noResultsText}>No users found</Text>
-                    }
-                  />
-                ) : searching ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color="#3B82F6" />
-                  </View>
-                ) : null}
               </View>
+              
+              {/* Search Results */}
+              {searchResults.length > 0 ? (
+                <FlatList
+                  data={searchResults}
+                  keyExtractor={item => item.id}
+                  style={styles.searchResultsList}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.userResultItem}
+                      onPress={() => {
+                        navigation.navigate('UserProfile', { userId: item.id });
+                        setShowSearchModal(false);
+                      }}
+                    >
+                      <Image
+                        source={item.photoURL ? { uri: item.photoURL } : defaultAvatar}
+                        style={styles.userResultAvatar}
+                        defaultSource={defaultAvatar}
+                      />
+                      <View style={styles.userResultInfo}>
+                        <Text style={styles.userResultName}>{item.displayName || item.username}</Text>
+                        <Text style={styles.userResultUsername}>@{item.username}</Text>
+                      </View>
+                      <MaterialCommunityIcons name="chevron-right" size={20} color="#888" />
+                    </TouchableOpacity>
+                  )}
+                  ItemSeparatorComponent={() => <View style={styles.resultDivider} />}
+                  ListEmptyComponent={
+                    <Text style={styles.noResultsText}>No users found</Text>
+                  }
+                />
+              ) : searching ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#3B82F6" />
+                </View>
+              ) : null}
             </View>
           </View>
-        </Modal>
-      </View>
+        </BlurView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -665,248 +753,252 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0A0A0A',
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  mainContentContainer: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 20,
+  },
+  scrollContent: {
+    paddingBottom: 40,
+  },
+  
+  // Fixed Header with Blur
+  fixedHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 60,
+    zIndex: 100,
+  },
+  blurHeader: {
+    flex: 1,
     alignItems: 'center',
-    padding: 16,
-    paddingVertical: 12,
-    backgroundColor: '#121212',
+    justifyContent: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
   },
-  brandName: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#3B82F6',
-    marginBottom: 2,
+  headerTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
-  welcomeText: {
+  
+  // Top Section with Profile & Icons
+  topSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 30,
+  },
+  profileButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  profileImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 25,
+    borderWidth: 2,
+    borderColor: '#3B82F6',
+  },
+  welcomeSection: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  greetingText: {
     fontSize: 14,
     color: '#999',
-    marginBottom: 2,
   },
   nameText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#FFF',
+    color: '#FFFFFF',
   },
-  headerRight: {
+  iconButtonsRow: {
     flexDirection: 'row',
+    justifyContent: 'flex-end',
     alignItems: 'center',
+  },
+  iconButtonContainer: {
+    marginLeft: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 3,
   },
   iconButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#1A1A1A',
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: '#FF3B30',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#0A0A0A',
+  },
+  notificationText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  
+  // Date Selector
+  dateContainer: {
+    marginBottom: 24,
+  },
+  dateTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 16,
+  },
+  dateList: {
+    paddingVertical: 8,
+  },
+  dateItem: {
+    width: 60,
+    height: 70,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
     marginRight: 12,
   },
-  profileButton: {
+  dateItemInner: {
     width: 44,
-    height: 44,
+    height: 60,
     borderRadius: 22,
-    backgroundColor: '#2A2A2A',
-    overflow: 'hidden',
-    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1A1A1A',
+  },
+  selectedDateItemInner: {
+    backgroundColor: '#3B82F6',
+  },
+  todayDateItemInner: {
+    borderWidth: 1,
     borderColor: '#3B82F6',
   },
-  profileImage: {
-    width: '100%',
-    height: '100%',
+  dateText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
-  scrollContentContainer: {
-    paddingBottom: 20,
+  dayText: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 4,
   },
-
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
-    padding: 20,
+  selectedDateText: {
+    color: '#FFFFFF',
   },
-  modalContainer: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 16,
-    padding: 20,
+  selectedDayText: {
+    color: '#FFFFFF',
   },
-  modalHeader: {
+  
+  // Quick Actions Card
+  actionsCard: {
+    marginBottom: 24,
+    borderRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+    overflow: 'hidden',
+  },
+  actionsCardGradient: {
+    borderRadius: 24,
+    padding: 24,
+  },
+  actionsCardTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 24,
+  },
+  actionsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  searchInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#2A2A2A',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    marginBottom: 16,
-  },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchInput: {
-    flex: 1,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#FFFFFF',
-  },
-  searchButton: {
-    backgroundColor: '#3B82F6',
-    borderRadius: 8,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  searchButtonDisabled: {
-    backgroundColor: '#2A2A2A',
-  },
-  searchButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  searchResultsList: {
-    maxHeight: 300,
-  },
-  userResultItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1A1A1A',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-  },
-  userResultAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-  },
-  userResultInfo: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  userResultName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  userResultUsername: {
-    fontSize: 14,
-    color: '#999',
-  },
-  noResultsText: {
-    color: '#999',
-    fontSize: 16,
-    textAlign: 'center',
-    marginTop: 20,
-  },
-  loadingContainer: {
-    marginTop: 20,
-    alignItems: 'center',
-  },
-
-  // Action buttons
-  actionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    marginVertical: 20,
   },
   actionButton: {
     alignItems: 'center',
     width: '30%',
   },
-  actionBackground: {
+  actionButtonGradient: {
     width: 56,
     height: 56,
-    borderRadius: 16,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 4,
-      }
-    })
-  },
-  workoutActionBg: {
-    backgroundColor: '#3B82F6',
-  },
-  aiActionBg: {
-    backgroundColor: '#FF3B30',
-  },
-  communityActionBg: {
-    backgroundColor: '#10B981',
+    marginBottom: 12,
   },
   actionText: {
     fontSize: 14,
     fontWeight: '500',
     color: '#FFFFFF',
-    textAlign: 'center',
   },
-
-  // Card shadow styles for iOS compatibility
-  cardShadow: {
-    marginHorizontal: 20,
-    marginBottom: 20,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 10,
-      },
-      android: {
-        elevation: 4,
-      }
-    }),
-  },
-  surface: {
-    borderRadius: 20,
+  
+  // Chat Card
+  chatCardContainer: {
+    marginBottom: 24,
+    borderRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+    overflow: 'hidden',
   },
   aiChatCard: {
-    backgroundColor: '#141414',
-    borderRadius: 20,
-    overflow: undefined, // Remove overflow: 'hidden'
+    borderRadius: 24,
+    overflow: 'hidden',
   },
-
-  // AI Chat Card styles
   aiChatHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    paddingVertical: 18,
+    padding: 20,
   },
   aiTitleArea: {
     flexDirection: 'row',
     alignItems: 'center',
   },
+  aiIconBackground: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
   aiChatTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#FFFFFF',
-    marginLeft: 10,
   },
   chatContainer: {
     overflow: 'hidden',
     borderTopWidth: 1,
-    borderTopColor: '#222',
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
   },
   messagesContainer: {
     padding: 16,
@@ -916,13 +1008,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 12,
     borderTopWidth: 1,
-    borderTopColor: '#222',
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
   },
   input: {
     flex: 1,
-    backgroundColor: '#2A2A2A',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -931,24 +1023,24 @@ const styles = StyleSheet.create({
     maxHeight: 80,
   },
   sendButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#3B82F6',
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 10,
   },
   sendButtonDisabled: {
-    backgroundColor: '#2A2A2A',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
   },
-
-  // Message bubble styles
+  
+  // Message Bubbles
   messageBubble: {
-    marginBottom: 12,
     padding: 14,
     borderRadius: 18,
     maxWidth: '80%',
+    marginBottom: 12,
   },
   userBubble: {
     backgroundColor: '#3B82F6',
@@ -956,7 +1048,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
   },
   assistantBubble: {
-    backgroundColor: '#333333',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderBottomLeftRadius: 4,
     alignSelf: 'flex-start',
   },
@@ -971,7 +1063,7 @@ const styles = StyleSheet.create({
   assistantHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   assistantName: {
     color: '#FF3B30',
@@ -980,97 +1072,194 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   
-  // Steps card styles
-  stepsCard: {
-    backgroundColor: '#141414',
-    borderRadius: 20,
-    padding: 16,
+  // Stats Card
+  statsCardContainer: {
+    marginBottom: 20,
   },
-  stepsHeader: {
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 16,
+  },
+  cardContainer: {
+    borderRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+    overflow: 'hidden',
+  },
+  statsCard: {
+    borderRadius: 24,
+    padding: 20,
+  },
+  statsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 16,
   },
-  stepsIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+  statsIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
-  stepsInfo: {
+  statsInfo: {
     flex: 1,
   },
-  stepsTitle: {
-    fontSize: 18,
+  statsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  statsSubtitle: {
+    fontSize: 13,
+    color: '#888',
+    marginTop: 2,
+  },
+  statsContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statsMetric: {
+    flex: 1,
+  },
+  statsCount: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  statsLabel: {
+    fontSize: 14,
+    color: '#888',
+  },
+  
+  // Search Modal
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContainer: {
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    backgroundColor: 'rgba(26, 26, 26, 0.9)',
+    borderRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+    overflow: 'hidden',
+  },
+  modalContent: {
+    padding: 24,
+    flex: 1,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  closeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchContainer: {
+    marginBottom: 16,
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#FFFFFF',
+  },
+  searchButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  searchButtonDisabled: {
+    opacity: 0.6,
+  },
+  searchButtonGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderRadius: 12,
+  },
+  searchButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  searchResultsList: {
+    flex: 1,
+  },
+  userResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+  },
+  userResultAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#2A2A2A',
+  },
+  userResultInfo: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  userResultName: {
+    fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
     marginBottom: 2,
   },
-  stepsSubtitle: {
+  userResultUsername: {
     fontSize: 14,
-    color: '#999',
+    color: '#888',
   },
-  stepsContent: {
-    flexDirection: 'row',
+  resultDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    marginVertical: 4,
+  },
+  noResultsText: {
+    color: '#888',
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 20,
+  },
+  loadingContainer: {
+    marginTop: 20,
     alignItems: 'center',
-  },
-  stepsMetric: {
-    width: '30%',
-  },
-  stepsCount: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-  },
-  stepsLabel: {
-    fontSize: 14,
-    color: '#999',
-  },
-  stepsProgress: {
-    flex: 1,
-    marginLeft: 16,
-  },
-  stepsProgressBar: {
-    height: 8,
-    backgroundColor: '#2A2A2A',
-    borderRadius: 4,
-    marginBottom: 8,
-  },
-  stepsProgressFill: {
-    height: 8,
-    backgroundColor: '#3B82F6',
-    borderRadius: 4,
-  },
-  stepsGoal: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'right',
-  },
-
-  // Notification badge
-  notificationBadge: {
-    position: 'absolute',
-    top: -5,
-    right: -5,
-    backgroundColor: '#FF3B30',
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#121212',
-  },
-  notificationText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  contentWrapper: {
-    borderRadius: 20,
-    // No overflow property
   },
 });

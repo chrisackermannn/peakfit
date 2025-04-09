@@ -198,34 +198,33 @@ export async function saveWorkoutGlobally(workoutData) {
     if (!workoutData.userId || !workoutData.userDisplayName) {
       throw new Error('Missing user information');
     }
-
-    // Ensure required fields are present for security rules
-    if (!workoutData.exercises) {
+    
+    // Ensure required fields are present
+    if (!workoutData.exercises || !Array.isArray(workoutData.exercises)) {
       workoutData.exercises = [];
     }
-
+    
     // Calculate total weight if not provided
     if (!workoutData.totalWeight || typeof workoutData.totalWeight !== 'number') {
       let totalWeight = 0;
-      // Sum up weights from exercises
+      
       if (Array.isArray(workoutData.exercises)) {
         workoutData.exercises.forEach(exercise => {
-          if (exercise.sets && Array.isArray(exercise.sets)) {
-            exercise.sets.forEach(set => {
-              if (set.weight && typeof set.weight === 'number') {
-                totalWeight += set.weight * (set.reps || 1);
-              }
-            });
-          }
+          // Use the simplified exercise format from WorkoutScreen
+          const weight = Number(exercise.weight) || 0;
+          const sets = Number(exercise.sets) || 0;
+          const reps = Number(exercise.reps) || 0;
+          totalWeight += weight * sets * reps;
         });
       }
+      
       workoutData.totalWeight = totalWeight > 0 ? totalWeight : 1;
     }
-
-    // Create document ID without using __name__
+    
+    // Create a unique ID for the workout
     const customDocId = `${workoutData.userId}_${Date.now()}`;
-    const globalWorkoutsRef = doc(db, 'globalWorkouts', customDocId);
-
+    
+    // Prepare data for Firestore
     const docData = {
       ...workoutData,
       createdAt: serverTimestamp(),
@@ -233,17 +232,18 @@ export async function saveWorkoutGlobally(workoutData) {
       likes: [],
       comments: []
     };
-
-    // Use setDoc without merge option
+    
+    // Save to global workouts collection
+    const globalWorkoutsRef = doc(db, 'globalWorkouts', customDocId);
     await setDoc(globalWorkoutsRef, docData);
-
-    // Save to user's profile
+    
+    // Also save a copy to the user's personal workouts
     await saveWorkoutToProfile(workoutData.userId, {
       ...workoutData,
       isPublic: true,
       globalWorkoutId: customDocId
     });
-
+    
     return customDocId;
   } catch (error) {
     console.error('Error saving global workout:', error);
@@ -254,19 +254,41 @@ export async function saveWorkoutGlobally(workoutData) {
 // Add functions for likes/comments
 export async function toggleLike(workoutId, userId) {
   try {
+    // Log the operation for debugging
+    console.log(`Toggling like for workout ${workoutId} by user ${userId}`);
+    
     const workoutRef = doc(db, 'globalWorkouts', workoutId);
+    
+    // First get the current document
     const workoutDoc = await getDoc(workoutRef);
-    const likes = workoutDoc.data().likes || [];
-
+    
+    if (!workoutDoc.exists()) {
+      throw new Error('Workout not found');
+    }
+    
+    const data = workoutDoc.data();
+    const likes = data.likes || [];
+    
+    // Log current likes for debugging
+    console.log('Current likes:', likes);
+    
     if (likes.includes(userId)) {
+      // Remove user from likes array
+      console.log(`Removing like: ${userId} from ${workoutId}`);
       await updateDoc(workoutRef, {
-        likes: likes.filter(id => id !== userId)
+        likes: likes.filter(id => id !== userId),
+        updatedAt: serverTimestamp() // Critical for security rules
       });
     } else {
+      // Add user to likes array
+      console.log(`Adding like: ${userId} to ${workoutId}`);
       await updateDoc(workoutRef, {
-        likes: [...likes, userId]
+        likes: [...likes, userId],
+        updatedAt: serverTimestamp() // Critical for security rules
       });
     }
+    
+    return true;
   } catch (error) {
     console.error('Error toggling like:', error);
     throw error;
@@ -320,9 +342,10 @@ export async function addComment(workoutId, commentData) {
       createdAt: new Date().toISOString()
     };
 
-    // Update document with new comment
+    // Update document with new comment and set updatedAt timestamp
     await updateDoc(workoutRef, {
-      comments: arrayUnion(comment)
+      comments: arrayUnion(comment),
+      updatedAt: serverTimestamp() // This is critical for security rules
     });
 
     return comment.id;

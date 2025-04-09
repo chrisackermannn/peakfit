@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,484 +9,664 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
-  ScrollView,
   SafeAreaView,
   Image,
-  Modal
+  Modal,
+  Dimensions,
+  Animated,
+  KeyboardAvoidingView,
+  Platform
 } from 'react-native';
-import { Card, Button, IconButton, Avatar, Divider } from 'react-native-paper';
+import { Button, IconButton, Avatar, Surface } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
 import { getGlobalWorkouts, toggleLike, addComment, saveTemplate } from '../data/firebaseHelpers';
-import { format } from 'date-fns';
-import { collection, query, orderBy, limit, onSnapshot, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { format, formatDistanceToNow } from 'date-fns';
+import { collection, query, orderBy, limit, onSnapshot, where, getDocs, doc, getDoc, arrayUnion, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { showMessage } from "react-native-flash-message";
+import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
+import { StatusBar } from 'expo-status-bar';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+const { width, height } = Dimensions.get('window');
 const defaultAvatar = require('../assets/default-avatar.png');
+
+// Helper function for timestamp processing
+const processTimestamp = (timestamp) => {
+  if (!timestamp) return new Date();
+  
+  try {
+    if (typeof timestamp.toDate === 'function') {
+      return timestamp.toDate();
+    } else if (timestamp instanceof Date) {
+      return timestamp;
+    } else if (typeof timestamp === 'string') {
+      return new Date(timestamp);
+    } else if (timestamp.seconds) {
+      return new Date(timestamp.seconds * 1000);
+    }
+  } catch (err) {
+    console.log('Error converting timestamp:', err);
+  }
+  
+  return new Date();
+};
 
 const CommunityScreen = () => {
   const navigation = useNavigation();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+  
   const [workouts, setWorkouts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [comment, setComment] = useState('');
-  const [selectedWorkout, setSelectedWorkout] = useState(null);
-  const [templateNameModalVisible, setTemplateNameModalVisible] = useState(false);
-  const [templateName, setTemplateName] = useState('');
-  const [currentWorkout, setCurrentWorkout] = useState(null);
   const [activeTab, setActiveTab] = useState('global');
-
-  // Format duration helper function
+  const [selectedWorkout, setSelectedWorkout] = useState(null);
+  const [comment, setComment] = useState('');
+  const [templateName, setTemplateName] = useState('');
+  const [templateNameModalVisible, setTemplateNameModalVisible] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [scrollY] = useState(new Animated.Value(0));
+  const [activeCommentWorkoutId, setActiveCommentWorkoutId] = useState(null);
+  const [commentText, setCommentText] = useState('');
+  
+  // Header animation based on scroll
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, 60, 90],
+    outputRange: [0, 0.8, 1],
+    extrapolate: 'clamp'
+  });
+  
+  // Format duration helper
   const formatDuration = (seconds) => {
-    if (!seconds && seconds !== 0) return '--';
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    if (!seconds) return '0m';
+    
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    
+    if (minutes === 0) {
+      return `${remainingSeconds}s`;
+    } else if (remainingSeconds === 0) {
+      return `${minutes}m`;
+    } else {
+      return `${minutes}m ${remainingSeconds}s`;
+    }
   };
-
-  const loadWorkouts = async (tab = activeTab) => {
+  
+  // Initial load and tab change effect
+  useEffect(() => {
+    const unsubscribe = loadWorkouts(activeTab);
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, [activeTab]);
+  
+  // Unified workout loading function for both tabs
+  const loadWorkouts = (tabType) => {
+    setLoading(true);
+    
     try {
-      setLoading(true);
-      let workoutQuery;
+      let workoutsQuery;
       
-      if (tab === 'global') {
+      if (tabType === 'global') {
         // Global feed - all public workouts
-        workoutQuery = query(
-          collection(db, 'globalWorkouts'),
+        workoutsQuery = query(
+          collection(db, 'globalWorkouts'), 
           orderBy('createdAt', 'desc'),
-          limit(20)
+          limit(50)
         );
+        
+        // Listen for real-time updates for the global feed
+        const unsubscribe = onSnapshot(workoutsQuery, (snapshot) => {
+          const workoutsData = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              ...data,
+              createdAt: processTimestamp(data.createdAt)
+            };
+          });
+          
+          setWorkouts(workoutsData);
+          setLoading(false);
+          setRefreshing(false);
+        }, (error) => {
+          console.error('Snapshot error:', error);
+          setLoading(false);
+          setRefreshing(false);
+        });
+        
+        return unsubscribe;
       } else {
-        // Friends feed - only workouts from friends
+        // Friends tab - uses the same display logic but filters to only show friend's posts
         if (!user?.uid) {
           setWorkouts([]);
           setLoading(false);
+          setRefreshing(false);
           return () => {};
         }
         
-        // Get current user's friend list from Firestore
-        const userDocRef = doc(db, 'users', user.uid);
-        const userDocSnap = await getDoc(userDocRef);
-        
-        if (!userDocSnap.exists()) {
-          setWorkouts([]);
-          setLoading(false);
-          return () => {};
-        }
-        
-        const userData = userDocSnap.data();
-        const friendIds = userData.friends || [];
-        
-        // If no friends, show empty state
-        if (friendIds.length === 0) {
-          setWorkouts([]);
-          setLoading(false);
-          return () => {};
-        }
-        
-        // Query workouts from friends only
-        workoutQuery = query(
+        // Get all global workouts then filter by friends list
+        const globalQuery = query(
           collection(db, 'globalWorkouts'),
-          where('userId', 'in', friendIds),
           orderBy('createdAt', 'desc'),
-          limit(20)
+          limit(100)
         );
+        
+        const unsubscribe = onSnapshot(globalQuery, async (snapshot) => {
+          try {
+            // Get the user's friends list
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
+            
+            if (!userDoc.exists()) {
+              console.log("User document not found");
+              setWorkouts([]);
+              setLoading(false);
+              setRefreshing(false);
+              return;
+            }
+            
+            const friendIds = userDoc.data().friends || [];
+            
+            if (friendIds.length === 0) {
+              setWorkouts([]);
+              setLoading(false);
+              setRefreshing(false);
+              return;
+            }
+            
+            // Filter workouts to only include those from friends
+            const friendWorkouts = snapshot.docs
+              .map(doc => ({
+                id: doc.id,
+                ...doc.data(),
+                createdAt: processTimestamp(doc.data().createdAt)
+              }))
+              .filter(workout => friendIds.includes(workout.userId));
+            
+            setWorkouts(friendWorkouts);
+          } catch (error) {
+            console.error('Error processing friend workouts:', error);
+          } finally {
+            setLoading(false);
+            setRefreshing(false);
+          }
+        }, (error) => {
+          console.error('Snapshot error:', error);
+          setLoading(false);
+          setRefreshing(false);
+        });
+        
+        return unsubscribe;
       }
-
-      const unsubscribe = onSnapshot(workoutQuery, (snapshot) => {
-        const newWorkouts = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-          createdAt: doc.data().createdAt?.toDate() || new Date(),
-          likes: doc.data().likes || [],
-          comments: doc.data().comments || []
-        }));
-        setWorkouts(newWorkouts);
-        setLoading(false);
-      }, (error) => {
-        console.error('Snapshot error:', error);
-        setLoading(false);
-      });
-
-      return unsubscribe;
     } catch (error) {
       console.error('Error loading workouts:', error);
       setLoading(false);
+      setRefreshing(false);
       return () => {};
     }
   };
-
-  useEffect(() => {
-    const cleanup = loadWorkouts(activeTab);
-    return () => {
-      if (typeof cleanup === 'function') {
-        cleanup();
-      }
-    };
-  }, [activeTab, user?.uid]);
-
-  const onRefresh = async () => {
+  
+  // Pull to refresh
+  const onRefresh = useCallback(() => {
     setRefreshing(true);
-    await loadWorkouts(activeTab);
-    setRefreshing(false);
-  };
-
+    loadWorkouts(activeTab);
+  }, [activeTab, user?.uid]);
+  
+  // Like/unlike a workout
   const handleLike = async (workoutId) => {
-    if (!user?.uid) return;
+    if (!user?.uid) {
+      Alert.alert('Sign In Required', 'Please sign in to like posts');
+      return;
+    }
+    
     try {
       await toggleLike(workoutId, user.uid);
     } catch (error) {
-      console.error('Error liking workout:', error);
+      console.error('Error toggling like:', error);
     }
   };
-
+  
+  // Add comment to workout
   const handleComment = async (workoutId) => {
-    if (!comment.trim() || !user?.uid) return;
+    if (!commentText.trim() || !user?.uid) return;
     
     try {
-      const commentData = {
+      await addComment(workoutId, {
         userId: user.uid,
-        userDisplayName: user.displayName || user.username || 'Anonymous',
+        userDisplayName: user.displayName || 'Anonymous',
         userPhotoURL: user.photoURL || null,
-        text: comment.trim(),
-        createdAt: new Date().toISOString()
-      };
-
-      await addComment(workoutId, commentData);
-      setComment('');
-      setSelectedWorkout(null);
+        text: commentText,
+        createdAt: new Date()
+      });
+      
+      // Clear the comment text but keep the comment section open
+      setCommentText('');
     } catch (error) {
       console.error('Error adding comment:', error);
       Alert.alert('Error', 'Failed to post comment');
     }
   };
-
-  // Template functions
+  
+  // Copy workout to templates
   const copyWorkoutTemplate = (workout) => {
     if (!user?.uid) {
-      Alert.alert('Login Required', 'Please log in to save templates');
+      Alert.alert('Sign In Required', 'Please sign in to save templates');
       return;
     }
     
-    setCurrentWorkout(workout);
-    setTemplateName('');
+    setSelectedTemplate(workout);
+    setTemplateName(workout.name || 'New Template');
     setTemplateNameModalVisible(true);
   };
-
+  
+  // Save workout template
   const saveWorkoutTemplate = async () => {
-    if (!templateName.trim() || !currentWorkout) {
-      Alert.alert('Error', 'Please provide a name for the template');
+    if (!templateName.trim()) {
+      Alert.alert('Error', 'Please enter a template name');
       return;
     }
     
     try {
-      const templateData = {
-        name: templateName.trim(),
+      await saveTemplate(user.uid, {
+        name: templateName,
+        exercises: selectedTemplate.exercises,
+        createdAt: new Date(),
         sourceWorkout: {
-          id: currentWorkout.id,
-          userDisplayName: currentWorkout.userDisplayName || 'Anonymous'
-        },
-        exercises: currentWorkout.exercises.map(ex => ({
-          name: ex.name,
-          sets: ex.sets,
-          reps: ex.reps
-        }))
-      };
-      
-      await saveTemplate(user.uid, templateData);
-      
-      showMessage({
-        message: "Template Saved!",
-        description: "Access it when starting a new workout",
-        type: "success",
-        backgroundColor: "#3B82F6",
-        duration: 3000,
-        icon: "success"
+          id: selectedTemplate.id,
+          userId: selectedTemplate.userId,
+          userDisplayName: selectedTemplate.userDisplayName || 'Anonymous'
+        }
       });
       
       setTemplateNameModalVisible(false);
+      
+      showMessage({
+        message: "Template Saved",
+        description: "Workout template has been saved to your library",
+        type: "success",
+        duration: 3000
+      });
     } catch (error) {
       console.error('Error saving template:', error);
       Alert.alert('Error', 'Could not save workout template');
     }
   };
-
+  
   // Navigate to user profile
   const handleUserPress = (userId) => {
     navigation.navigate('UserProfile', { userId });
   };
-
-  // Render comment section
-  const renderComments = (item) => (
-    <View style={styles.commentsSection}>
-      <Divider style={styles.divider} />
-      
-      {/* Comments List */}
-      {item.comments?.map((comment, index) => {
-        // Generate unique timestamp for each avatar to force refresh
-        const imageKey = Date.now() + index;
-        return (
-          <View key={index} style={styles.commentContainer}>
-            <View style={styles.commentHeader}>
-              <TouchableOpacity 
-                onPress={() => handleUserPress(comment.userId)}
-                style={styles.commentAvatarContainer}
-              >
-                <Avatar.Image 
-                  size={24} 
-                  source={
-                    comment.userPhotoURL 
-                      ? { uri: `${comment.userPhotoURL}?t=${imageKey}` } 
-                      : defaultAvatar
-                  }
-                />
-              </TouchableOpacity>
-              <Text style={styles.commentUser}>{comment.userDisplayName}</Text>
-              <Text style={styles.commentTime}>
-                {format(new Date(comment.createdAt), 'MMM d, h:mm a')}
-              </Text>
-            </View>
-            <Text style={styles.commentText}>{comment.text}</Text>
-          </View>
-        );
-      })}
-
-      {/* Comment Input */}
-      {selectedWorkout?.id === item.id && (
-        <View style={styles.commentInputContainer}>
-          <TextInput
-            style={styles.commentInput}
-            value={comment}
-            onChangeText={setComment}
-            placeholder="Add a comment..."
-            placeholderTextColor="#999"
-            multiline
-            maxLength={500}
-          />
-          <IconButton
-            icon="send"
-            size={20}
-            color="#3B82F6"
-            onPress={() => handleComment(item.id)}
-            disabled={!comment.trim()}
-          />
-        </View>
-      )}
+  
+  // Loading state component
+  const LoadingState = () => (
+    <View style={styles.loadingContainer}>
+      <ActivityIndicator size="large" color="#3B82F6" />
     </View>
   );
-
-  // Render workout card
-  const renderWorkout = ({ item }) => (
-    <Card style={styles.workoutCard}>
-      <Card.Content>
-        <View style={styles.userInfo}>
-          <TouchableOpacity 
-            style={styles.userHeader}
-            onPress={() => handleUserPress(item.userId)}
-          >
-            <Avatar.Image 
-              size={40} 
-              source={item.userPhotoURL ? { uri: `${item.userPhotoURL}?t=${Date.now()}` } : defaultAvatar} 
-            />
-            <View style={styles.userMeta}>
-              <Text style={styles.userName}>
-                {item.userDisplayName || 'Anonymous'}
-              </Text>
-              <Text style={styles.timestamp}>
-                {format(item.createdAt, 'MMM d, yyyy')}
-              </Text>
-            </View>
-          </TouchableOpacity>
-          <View style={styles.cardActions}>
-            <IconButton 
-              icon="content-copy" 
-              size={20} 
-              color="#3B82F6"
-              onPress={() => copyWorkoutTemplate(item)}
-              style={styles.copyButton}
-            />
-          </View>
-        </View>
-
-        <View style={styles.workoutContent}>
-          <View style={styles.workoutMeta}>
-            <Text style={styles.workoutStats}>
-              🏋️‍♂️ {item.exercises?.length || 0} exercises
-            </Text>
-            <Text style={styles.workoutStats}>
-              ⏱️ {formatDuration(item.duration)}
-            </Text>
-          </View>
-
-          <View style={styles.exercisesList}>
-            {item.exercises?.map((exercise, index) => (
-              <Text key={index} style={styles.exerciseItem}>
-                • {exercise.name}: {exercise.sets}×{exercise.reps} @ {exercise.weight}lbs
-              </Text>
-            ))}
-          </View>
-        </View>
-
-        {renderActionButtons({ item })}
-
-        {selectedWorkout?.id === item.id && renderComments(item)}
-      </Card.Content>
-    </Card>
-  );
-
-  const renderActionButtons = ({ item }) => (
-    <View style={styles.actions}>
-      <Button 
-        icon={({size}) => (
-          <MaterialCommunityIcons 
-            name="heart"
-            size={24}
-            color={item.likes?.includes(user?.uid) ? '#FF3B30' : '#666'}
-          />
-        )}
-        mode="outlined"
-        onPress={() => handleLike(item.id)}
-        style={styles.actionButton}
-        labelStyle={{
-          color: '#666'
-        }}
-      >
-        {item.likes?.length || 0}
-      </Button>
-
-      <Button 
-        icon={({size}) => (
-          <MaterialCommunityIcons 
-            name="comment"
-            size={24}
-            color={selectedWorkout?.id === item.id ? '#007AFF' : '#666'}
-          />
-        )}
-        mode="outlined"
-        onPress={() => setSelectedWorkout(selectedWorkout?.id === item.id ? null : item)}
-        style={styles.actionButton}
-        labelStyle={{
-          color: '#666'
-        }}
-      >
-        {item.comments?.length || 0}
-      </Button>
-    </View>
-  );
-
-  if (loading && !refreshing) {
+  
+  // Workout Card Component
+  const renderWorkoutCard = useCallback(({ item }) => {
+    const isLiked = item.likes?.includes(user?.uid);
+    const isCommentSelected = activeCommentWorkoutId === item.id;
+    
+    // Safe timestamp handling for display
+    let timeAgo = 'recently';
+    try {
+      if (item.createdAt instanceof Date) {
+        timeAgo = formatDistanceToNow(item.createdAt, { addSuffix: true });
+      }
+    } catch (error) {
+      console.log('Error formatting date:', error);
+    }
+    
+    // Check if this workout belongs to the current user
+    const isOwnWorkout = item.userId === user?.uid;
+    
+    const toggleComment = () => {
+      setActiveCommentWorkoutId(isCommentSelected ? null : item.id);
+      // Reset comment text when closing or switching comments
+      if (!isCommentSelected || activeCommentWorkoutId !== item.id) {
+        setCommentText('');
+      }
+    };
+    
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#007AFF" />
+      <View style={styles.cardWrapper}>
+        <Surface style={styles.workoutCard}>
+          <View style={styles.cardInnerWrapper}>
+            <LinearGradient
+              colors={['#1A1A1A', '#131313']}
+              style={styles.cardGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              {/* User Header */}
+              <TouchableOpacity 
+                style={styles.userInfo}
+                onPress={() => handleUserPress(item.userId)}
+                activeOpacity={0.8}
+              >
+                <View style={styles.userHeader}>
+                  <Image
+                    source={item.userPhotoURL ? { uri: item.userPhotoURL } : defaultAvatar}
+                    style={styles.userAvatar}
+                    defaultSource={defaultAvatar}
+                  />
+                  <View style={styles.userMeta}>
+                    <Text style={styles.userName}>
+                      {isOwnWorkout ? 'You' : (item.userDisplayName || 'Anonymous')}
+                    </Text>
+                    <Text style={styles.timestamp}>{timeAgo}</Text>
+                  </View>
+                </View>
+                
+                <TouchableOpacity 
+                  onPress={() => copyWorkoutTemplate(item)}
+                  style={styles.saveTemplateButton}
+                >
+                  <MaterialCommunityIcons name="content-save-outline" size={18} color="#3B82F6" />
+                  <Text style={styles.saveTemplateText}>Save</Text>
+                </TouchableOpacity>
+              </TouchableOpacity>
+              
+              {/* Workout Content */}
+              <View style={styles.workoutContent}>
+                {item.name && (
+                  <Text style={styles.workoutTitle}>{item.name}</Text>
+                )}
+                
+                <View style={styles.workoutMeta}>
+                  <View style={styles.metaItem}>
+                    <MaterialCommunityIcons name="clock-outline" size={16} color="#60A5FA" />
+                    <Text style={styles.metaText}>{formatDuration(item.duration)}</Text>
+                  </View>
+                  
+                  <View style={styles.metaItem}>
+                    <MaterialCommunityIcons name="dumbbell" size={16} color="#60A5FA" />
+                    <Text style={styles.metaText}>{item.exercises?.length || 0} exercises</Text>
+                  </View>
+                  
+                  <View style={styles.metaItem}>
+                    <MaterialCommunityIcons name="fire" size={16} color="#60A5FA" />
+                    <Text style={styles.metaText}>{Math.round((item.totalWeight || 0) / 10)} cal</Text>
+                  </View>
+                </View>
+                
+                {/* Exercise List */}
+                <View style={styles.exercisesList}>
+                  {item.exercises?.slice(0, 3).map((exercise, index) => (
+                    <View key={index} style={styles.exerciseItem}>
+                      <Text style={styles.exerciseName}>{exercise.name}</Text>
+                      <Text style={styles.exerciseDetails}>
+                        {exercise.sets} × {exercise.reps} @ {exercise.weight}lbs
+                      </Text>
+                    </View>
+                  ))}
+                  
+                  {(item.exercises?.length || 0) > 3 && (
+                    <Text style={styles.moreExercises}>+{item.exercises.length - 3} more exercises</Text>
+                  )}
+                </View>
+                
+                {/* Action Buttons */}
+                <View style={styles.actions}>
+                  <TouchableOpacity 
+                    style={[styles.actionButton, isLiked && styles.likedButton]} 
+                    onPress={() => handleLike(item.id)}
+                  >
+                    <MaterialCommunityIcons 
+                      name={isLiked ? "heart" : "heart-outline"}
+                      size={20} 
+                      color={isLiked ? "#FF3B30" : "#999"}
+                    />
+                    <Text style={[styles.actionText, isLiked && { color: "#FF3B30" }]}>
+                      {item.likes?.length || 0}
+                    </Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={[styles.actionButton, isCommentSelected && styles.activeCommentButton]} 
+                    onPress={toggleComment}
+                  >
+                    <MaterialCommunityIcons 
+                      name="comment-outline" 
+                      size={20} 
+                      color={isCommentSelected ? "#3B82F6" : "#999"} 
+                    />
+                    <Text style={[styles.actionText, isCommentSelected && styles.activeCommentText]}>
+                      {item.comments?.length || 0}
+                    </Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity style={styles.actionButton}>
+                    <MaterialCommunityIcons name="share-outline" size={20} color="#999" />
+                  </TouchableOpacity>
+                </View>
+                
+                {/* Comments Section - WITH INPUT BELOW */}
+                {isCommentSelected && (
+                  <View style={styles.commentsSection}>
+                    {/* Comments List */}
+                    {(item.comments?.length || 0) > 0 ? (
+                      item.comments.map((comment, index) => (
+                        <View key={index} style={styles.commentContainer}>
+                          <View style={styles.commentHeader}>
+                            <Image 
+                              source={comment.userPhotoURL ? { uri: comment.userPhotoURL } : defaultAvatar} 
+                              style={styles.commentAvatar}
+                              defaultSource={defaultAvatar}
+                            />
+                            <Text style={styles.commentUsername}>{comment.userDisplayName}</Text>
+                          </View>
+                          <Text style={styles.commentText}>{comment.text}</Text>
+                        </View>
+                      ))
+                    ) : (
+                      <Text style={styles.noCommentsText}>No comments yet. Be the first!</Text>
+                    )}
+                    
+                    {/* Comment Input - INLINE */}
+                    <View style={styles.commentInputWrapper}>
+                      <TextInput
+                        style={styles.commentInput}
+                        placeholder="Add a comment..."
+                        placeholderTextColor="#999"
+                        value={item.id === activeCommentWorkoutId ? commentText : ''}
+                        onChangeText={setCommentText}
+                        multiline={true}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        blurOnSubmit={false}
+                        returnKeyType="default"
+                        keyboardAppearance="dark"
+                      />
+                      <TouchableOpacity 
+                        style={[
+                          styles.postCommentButton,
+                          !commentText.trim() && styles.disabledPostButton
+                        ]} 
+                        disabled={!commentText.trim()}
+                        onPress={() => handleComment(item.id)}
+                      >
+                        <MaterialCommunityIcons 
+                          name="send" 
+                          size={18} 
+                          color={commentText.trim() ? "#FFF" : "#666"} 
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </View>
+            </LinearGradient>
+          </View>
+        </Surface>
       </View>
     );
-  }
+  }, [user?.uid, activeCommentWorkoutId, commentText]);
+
+  // Empty state component
+  const EmptyState = () => (
+    <View style={styles.emptyContainer}>
+      <MaterialCommunityIcons 
+        name={activeTab === 'global' ? "earth" : "account-group"} 
+        size={60} 
+        color="#666" 
+      />
+      <Text style={styles.emptyTitle}>No workouts to show</Text>
+      <Text style={styles.emptyText}>
+        {activeTab === 'global' 
+          ? "Be the first to share your workout with the community!" 
+          : "Follow friends to see their workouts here"}
+      </Text>
+      {activeTab === 'friends' && (
+        <TouchableOpacity 
+          style={styles.findFriendsButton}
+          onPress={() => navigation.navigate('Friends')}
+        >
+          <LinearGradient
+            colors={['#3B82F6', '#2563EB']}
+            style={styles.gradientButton}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <Text style={styles.findFriendsText}>Find Friends</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.pageTitle}>Community</Text>
-        <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
-          <Image 
-            source={user?.photoURL ? { uri: `${user.photoURL}?t=${Date.now()}` } : defaultAvatar}
-            style={styles.profileImage}
-          />
-        </TouchableOpacity>
-      </View>
-
-      {/* Tab Navigation */}
-      <View style={styles.tabContainer}>
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'global' && styles.activeTab]} 
-          onPress={() => setActiveTab('global')}
-        >
-          <Text style={[styles.tabText, activeTab === 'global' && styles.activeTabText]}>Global</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.tab, activeTab === 'friends' && styles.activeTab]} 
-          onPress={() => setActiveTab('friends')}
-        >
-          <Text style={[styles.tabText, activeTab === 'friends' && styles.activeTabText]}>Friends</Text>
-        </TouchableOpacity>
-      </View>
-
-      {workouts.length > 0 ? (
-        <FlatList
-          data={workouts}
-          renderItem={renderWorkout}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.feedContainer}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <StatusBar style="light" />
+      
+      {/* Animated Header */}
+      <Animated.View 
+        style={[
+          styles.navHeader,
+          { 
+            opacity: headerOpacity,
+            paddingTop: insets.top > 0 ? 0 : 8
           }
-        />
-      ) : (
-        <ScrollView
-          contentContainerStyle={styles.emptyContainer}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-        >
-          <MaterialCommunityIcons 
-            name={activeTab === 'global' ? "earth" : "account-group"} 
-            size={60} 
-            color="#666" 
+        ]}
+      >
+        <Text style={styles.headerTitle}>Community</Text>
+      </Animated.View>
+      
+      <View style={styles.mainContent}>
+        {/* Tab Selector */}
+        <View style={styles.tabsContainer}>
+          <TouchableOpacity 
+            style={[styles.tab, activeTab === 'global' && styles.activeTab]} 
+            onPress={() => setActiveTab('global')}
+            activeOpacity={0.8}
+          >
+            <MaterialCommunityIcons 
+              name="earth" 
+              size={18} 
+              color={activeTab === 'global' ? "#FFF" : "#999"} 
+            />
+            <Text style={[styles.tabText, activeTab === 'global' && styles.activeTabText]}>
+              Global
+            </Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.tab, activeTab === 'friends' && styles.activeTab]} 
+            onPress={() => setActiveTab('friends')}
+            activeOpacity={0.8}
+          >
+            <MaterialCommunityIcons 
+              name="account-group" 
+              size={18} 
+              color={activeTab === 'friends' ? "#FFF" : "#999"} 
+            />
+            <Text style={[styles.tabText, activeTab === 'friends' && styles.activeTabText]}>
+              Friends
+            </Text>
+          </TouchableOpacity>
+        </View>
+        
+        {/* Workout List */}
+        {loading && !refreshing ? (
+          <LoadingState />
+        ) : workouts.length > 0 ? (
+          <Animated.FlatList
+            data={workouts}
+            renderItem={renderWorkoutCard}
+            keyExtractor={item => item.id}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing} 
+                onRefresh={onRefresh}
+                tintColor="#3B82F6"
+                colors={["#3B82F6"]}
+              />
+            }
+            onScroll={Animated.event(
+              [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+              { useNativeDriver: true }
+            )}
+            scrollEventThrottle={16}
           />
-          <Text style={styles.emptyText}>
-            {activeTab === 'global' 
-              ? "No workouts posted yet" 
-              : "No workout posts from friends yet"}
-          </Text>
-          {activeTab === 'friends' && (
-            <Button 
-              mode="contained" 
-              onPress={() => navigation.navigate('Friends')}
-              style={styles.findFriendsButton}
-            >
-              Find Friends
-            </Button>
-          )}
-        </ScrollView>
-      )}
-
-      {/* Template Name Modal */}
+        ) : (
+          <EmptyState />
+        )}
+      </View>
+      
+      {/* Save Template Modal */}
       <Modal
         visible={templateNameModalVisible}
         transparent={true}
         animationType="fade"
+        statusBarTranslucent
         onRequestClose={() => setTemplateNameModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.contentWrapper}>
-              <Text style={styles.modalTitle}>Save as Template</Text>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Enter template name"
-                placeholderTextColor="#999"
-                value={templateName}
-                onChangeText={setTemplateName}
-              />
-              <View style={styles.modalButtons}>
-                <Button
-                  mode="text"
-                  onPress={() => setTemplateNameModalVisible(false)}
-                  style={styles.modalButton}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  mode="contained"
-                  onPress={saveWorkoutTemplate}
-                  style={[styles.modalButton, styles.saveButton]}
-                >
-                  Save
-                </Button>
+          <TouchableOpacity 
+            style={styles.modalDismissArea} 
+            activeOpacity={1} 
+            onPress={() => setTemplateNameModalVisible(false)}
+          />
+          
+          <View style={styles.modalContainer}>
+            <BlurView intensity={80} tint="dark" style={styles.modalBlur}>
+              <View style={styles.modalContent}>
+                <Text style={styles.modalTitle}>Save Workout Template</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="Enter template name"
+                  placeholderTextColor="#999"
+                  value={templateName}
+                  onChangeText={setTemplateName}
+                />
+                <View style={styles.modalButtons}>
+                  <Button
+                    mode="text"
+                    onPress={() => setTemplateNameModalVisible(false)}
+                    style={styles.modalButton}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    mode="contained"
+                    onPress={saveWorkoutTemplate}
+                    style={[styles.modalButton, styles.saveButton]}
+                  >
+                    Save
+                  </Button>
+                </View>
               </View>
-            </View>
+            </BlurView>
           </View>
         </View>
       </Modal>
@@ -504,45 +684,74 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    backgroundColor: '#141414',
-    borderBottomColor: '#222',
-    borderBottomWidth: 1,
   },
   pageTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '700',
-    color: '#FFF',
+    color: '#FFFFFF',
   },
-  profileImage: {
+  profileButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#3B82F6',
+    overflow: 'hidden',
   },
-  tabContainer: {
+  profileImage: {
+    width: '100%',
+    height: '100%',
+  },
+  mainContent: {
+    flex: 1,
+  },
+  navHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 60,
+    backgroundColor: 'rgba(10, 10, 10, 0.95)',
+    zIndex: 100,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  tabsContainer: {
     flexDirection: 'row',
-    marginBottom: 8,
-    paddingHorizontal: 16,
+    padding: 16,
     paddingTop: 12,
+    backgroundColor: '#0A0A0A',
+    zIndex: 10,
   },
   tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 20,
-    marginRight: 12,
-    borderRadius: 20,
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    marginRight: 10,
     backgroundColor: '#1A1A1A',
   },
   activeTab: {
     backgroundColor: '#3B82F6',
   },
   tabText: {
-    fontSize: 14,
-    fontWeight: '600',
     color: '#999',
+    fontSize: 14,
+    fontWeight: '500',
+    marginLeft: 6,
   },
   activeTabText: {
     color: '#FFFFFF',
+  },
+  listContent: {
+    padding: 16,
+    paddingTop: 8,
   },
   divider: {
     height: 1,
@@ -556,182 +765,304 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingHorizontal: 16,
   },
-  feedContainer: {
-    paddingBottom: 20,
-  },
+  
+  // Workout card
   workoutCard: {
-    backgroundColor: '#141414',
-    borderRadius: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#222',
-    overflow: 'hidden',
-    marginHorizontal: 16,
+    borderRadius: 20,
+    marginBottom: 20,
+    // Remove overflow property
+  },
+  cardGradient: {
+    borderRadius: 20,
+    // Don't use overflow here
   },
   userInfo: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
   },
   userHeader: {
     flexDirection: 'row',
     alignItems: 'center',
   },
+  userAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+  },
   userMeta: {
     marginLeft: 12,
   },
   userName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#FFF',
-    marginBottom: 2,
+    color: '#FFFFFF',
   },
   timestamp: {
-    fontSize: 13,
-    color: '#666',
+    fontSize: 12,
+    color: '#999',
   },
+  saveTemplateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+  },
+  saveTemplateText: {
+    color: '#3B82F6',
+    fontSize: 13,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  
+  // Workout content
   workoutContent: {
-    marginVertical: 12,
+    padding: 16,
+  },
+  workoutTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 12,
   },
   workoutMeta: {
     flexDirection: 'row',
-    marginBottom: 8,
-    gap: 16,
+    marginBottom: 16,
+    gap: 14,
   },
-  workoutStats: {
-    fontSize: 15,
-    color: '#999',
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 20,
   },
+  metaText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '500',
+    marginLeft: 6,
+  },
+  
+  // Exercise list
   exercisesList: {
-    backgroundColor: '#1A1A1A',
+    backgroundColor: 'rgba(255,255,255,0.03)',
     borderRadius: 12,
     padding: 12,
-    marginTop: 8,
+    marginBottom: 16,
   },
   exerciseItem: {
-    fontSize: 15,
-    color: '#FFF',
-    marginBottom: 8,
-    paddingLeft: 8,
+    marginBottom: 10,
+    paddingLeft: 10,
     borderLeftWidth: 2,
     borderLeftColor: '#3B82F6',
   },
+  exerciseName: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  exerciseDetails: {
+    color: '#999',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  moreExercises: {
+    color: '#60A5FA',
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  
+  // Action buttons
   actions: {
     flexDirection: 'row',
-    marginTop: 12,
-    paddingTop: 12,
+    paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#222',
-    gap: 12,
+    borderTopColor: 'rgba(255,255,255,0.05)',
   },
   actionButton: {
-    flex: 1,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#222',
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+    marginRight: 12,
+  },
+  actionText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#999',
+    marginLeft: 6,
+  },
+  activeCommentText: {
+    color: '#3B82F6',
+  },
+  activeCommentButton: {
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
   },
   likedButton: {
-    backgroundColor: '#3B82F6',
-    borderColor: '#3B82F6',
+    backgroundColor: 'rgba(255, 59, 48, 0.1)',
   },
+  
+  // Comments section
+  commentsSection: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    borderRadius: 12,
+  },
+  commentContainer: {
+    marginBottom: 12,
+  },
+  commentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  commentAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    marginRight: 8,
+  },
+  commentUsername: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  commentText: {
+    fontSize: 14,
+    color: '#E0E0E0',
+    paddingLeft: 32,
+  },
+  noCommentsText: {
+    color: '#999',
+    fontSize: 14,
+    textAlign: 'center',
+    marginVertical: 12,
+  },
+  addCommentContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  commentInput: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  postCommentButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#3B82F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  disabledPostButton: {
+    backgroundColor: '#444',
+  },
+  keyboardSafeArea: {
+    width: '100%',
+  },
+  
+  // Loading state
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#0A0A0A',
   },
+  
+  // Empty state
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 32,
   },
+  emptyTitle: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: 16,
+  },
   emptyText: {
     fontSize: 16,
     color: '#666',
     textAlign: 'center',
-    marginTop: 20,
+    marginTop: 12,
     marginBottom: 20,
   },
   findFriendsButton: {
-    backgroundColor: '#3B82F6',
+    borderRadius: 12,
+    overflow: 'hidden',
     marginTop: 16,
   },
-  cardActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  copyButton: {
-    marginRight: -8,
-  },
-  commentsSection: {
-    marginTop: 12,
-  },
-  commentContainer: {
-    marginVertical: 8,
-  },
-  commentHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  commentAvatarContainer: {
-    marginRight: 8,
-  },
-  commentUser: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFF',
-    flex: 1,
-  },
-  commentTime: {
-    fontSize: 12,
-    color: '#666',
-  },
-  commentText: {
-    fontSize: 14,
-    color: '#DDD',
-    paddingLeft: 32,
-  },
-  commentInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    backgroundColor: '#1A1A1A',
-    borderRadius: 20,
-    paddingLeft: 12,
-  },
-  commentInput: {
-    flex: 1,
-    color: '#FFF',
-    paddingVertical: 8,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
+  gradientButton: {
+    paddingVertical: 12,
     paddingHorizontal: 20,
   },
-  modalContent: {
-    backgroundColor: '#1A1A1A',
+  findFriendsText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  modalDismissArea: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalBlur: {
     borderRadius: 16,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  modalContent: {
     padding: 20,
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '600',
-    color: '#FFF',
+    color: '#FFFFFF',
     marginBottom: 16,
     textAlign: 'center',
   },
   modalInput: {
-    backgroundColor: '#2A2A2A',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#FFF',
-    marginBottom: 20,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    padding: 16,
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginBottom: 16,
   },
   modalButtons: {
     flexDirection: 'row',
@@ -743,9 +1074,27 @@ const styles = StyleSheet.create({
   saveButton: {
     backgroundColor: '#3B82F6',
   },
-  contentWrapper: {
-    borderRadius: 16,
-  }
+  cardWrapper: {
+    marginBottom: 20,
+  },
+  cardInnerWrapper: {
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  cardWrapper: {
+    borderRadius: 20,
+    marginBottom: 20,
+  },
+  cardInnerWrapper: {
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  commentInputWrapper: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.05)',
+  },
 });
 
 export default CommunityScreen;
