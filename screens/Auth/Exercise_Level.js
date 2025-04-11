@@ -1,72 +1,146 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 
 const ExerciseLevelScreen = ({ navigation }) => {
-    const [exerciseLevel, setExerciseLevel] = useState('');
+    const [selectedLevel, setSelectedLevel] = useState('');
+
+    const handleLevelSelect = (level) => {
+        setSelectedLevel(level);
+    };
 
     const handleNext = () => {
-        // Add validation and logic here
-        navigation.navigate('Tabs');
+        if (!selectedLevel) {
+            alert('Please select an exercise level.');
+            return;
+        }
+        // Navigate to the next screen
+        navigation.navigate('Tabs', { exerciseLevel: selectedLevel });
     };
 
     return (
-        <ScrollView contentContainerStyle={styles.container}>
-            <Text style={styles.title}>Exercise Level</Text>
-            <Text style={styles.subtitle}>This will determine how to build an effective routine for you.</Text>
-            <View style={styles.button_container}>
+        <View style={styles.container}>
+            {/* Title */}
+            <Text style={styles.title}>Select Your Exercise Level</Text>
+            <Text style={styles.subtitle}>
+                Choose the level that best describes your current fitness experience.
+            </Text>
 
-                <button style={styles.button} onPress={setExerciseLevel}>Beginner</button>
-                <button style={styles.button} onPress={setExerciseLevel}>Intermediate</button>
-                <button style={styles.button} onPress={setExerciseLevel}>Expert</button>
+            {/* Exercise Level Buttons */}
+            <View style={styles.levelContainer}>
+                <TouchableOpacity
+                    style={[
+                        styles.levelButton,
+                        selectedLevel === 'Beginner' && styles.selectedButton,
+                    ]}
+                    onPress={() => handleLevelSelect('Beginner')}
+                >
+                    <Text
+                        style={[
+                            styles.levelButtonText,
+                            selectedLevel === 'Beginner' && styles.selectedButtonText,
+                        ]}
+                    >
+                        Beginner
+                    </Text>
+                </TouchableOpacity>
 
-            </View> 
-            <TouchableOpacity style={styles.button} onPress={handleNext}>
-                <Text style={styles.buttonText}>Next</Text>
+                <TouchableOpacity
+                    style={[
+                        styles.levelButton,
+                        selectedLevel === 'Intermediate' && styles.selectedButton,
+                    ]}
+                    onPress={() => handleLevelSelect('Intermediate')}
+                >
+                    <Text
+                        style={[
+                            styles.levelButtonText,
+                            selectedLevel === 'Intermediate' && styles.selectedButtonText,
+                        ]}
+                    >
+                        Intermediate
+                    </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                    style={[
+                        styles.levelButton,
+                        selectedLevel === 'Expert' && styles.selectedButton,
+                    ]}
+                    onPress={() => handleLevelSelect('Expert')}
+                >
+                    <Text
+                        style={[
+                            styles.levelButtonText,
+                            selectedLevel === 'Expert' && styles.selectedButtonText,
+                        ]}
+                    >
+                        Expert
+                    </Text>
+                </TouchableOpacity>
+            </View>
+
+            {/* Next Button */}
+            <TouchableOpacity style={styles.nextButton} onPress={handleNext}>
+                <Text style={styles.nextButtonText}>Next</Text>
             </TouchableOpacity>
-        </ScrollView>
+        </View>
     );
-}
+};
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
         justifyContent: 'center',
+        alignItems: 'center',
         padding: 20,
-        backgroundColor: '#fff',
+        backgroundColor: '#f9f9f9',
     },
     title: {
         fontSize: 24,
         fontWeight: 'bold',
         marginBottom: 10,
+        textAlign: 'center',
     },
     subtitle: {
         fontSize: 16,
-        marginBottom: 20,
+        color: '#666',
+        marginBottom: 30,
+        textAlign: 'center',
     },
-    input_container: {
-        marginBottom: 20,
+    levelContainer: {
+        width: '100%',
+        alignItems: 'center',
+        marginBottom: 40,
     },
-    input: {
-        borderWidth: 1,
-        borderColor: '#ccc',
-        borderRadius: 5,
-        padding: 10,
-        marginBottom: 10,
-    },
-    button: {
-        backgroundColor: '#007AFF',
+    levelButton: {
+        width: '80%',
         paddingVertical: 15,
-        borderRadius: 5,
+        borderRadius: 8,
+        backgroundColor: '#e0e0e0',
+        alignItems: 'center',
+        marginBottom: 15,
+    },
+    levelButtonText: {
+        fontSize: 18,
+        color: '#333',
+    },
+    selectedButton: {
+        backgroundColor: '#007AFF',
+    },
+    selectedButtonText: {
+        color: '#fff',
+    },
+    nextButton: {
+        width: '80%',
+        paddingVertical: 15,
+        borderRadius: 8,
+        backgroundColor: '#007AFF',
         alignItems: 'center',
     },
-    buttonText: {
+    nextButtonText: {
+        fontSize: 18,
         color: '#fff',
-        fontSize: 16,
-    },
-    button_container: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        marginBottom: 20,
+        fontWeight: 'bold',
     },
 });
 
