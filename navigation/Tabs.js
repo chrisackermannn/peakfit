@@ -6,25 +6,12 @@ import HomeScreen from '../screens/HomeScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import WorkoutScreen from '../screens/WorkoutScreen';
 import CommunityScreen from '../screens/Community';
-// Remove the import that's causing issues - you'll need the correct path
-// import ChatAIScreen from '../screens/ChatAI';
+import MessagesScreen from '../screens/MessagesScreen';
 import { triggerHaptic } from '../App';
 
 const Tab = createBottomTabNavigator();
 
 export default function Tabs() {
-  // Function to handle tab press with haptic feedback
-  const handleTabPress = (e) => {
-    // Prevent default behavior
-    e.preventDefault();
-    
-    // Trigger haptic feedback
-    triggerHaptic('light');
-    
-    // Navigate to the screen
-    e.target.navigate(e.target.key.split('-')[0]);
-  };
-
   return (
     <Tab.Navigator
       screenOptions={{
@@ -39,7 +26,15 @@ export default function Tabs() {
           paddingTop: 10,
         },
         headerShown: false,
+        // Keep all screens mounted and running in the background
+        lazy: false,
+        // Don't detach screens when navigating away
+        detachInactiveScreens: false,
+        // Optimize screen transitions on iOS
+        freezeOnBlur: false
       }}
+      // Keep all screens in memory
+      backBehavior="initialRoute"
     >
       <Tab.Screen
         name="Home"
@@ -81,6 +76,18 @@ export default function Tabs() {
           tabBarIcon: ({ color, size }) => (
             <MaterialCommunityIcons name="account-group" size={28} color={color} />
           ),
+        }}
+      />
+      {/* Register MessagesScreen but don't show it in the tab bar */}
+      <Tab.Screen
+        name="Messages"
+        component={MessagesScreen}
+        options={{
+          // This removes the tab completely (no space allocated)
+          tabBarItemStyle: { display: 'none', width: 0, height: 0 },
+          // These ensure it's fully hidden from the tab bar
+          tabBarButton: () => null,
+          tabBarVisible: false
         }}
       />
       <Tab.Screen

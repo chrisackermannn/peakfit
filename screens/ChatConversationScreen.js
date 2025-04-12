@@ -31,6 +31,8 @@ import {
   markConversationAsRead, 
   listenToMessages 
 } from '../data/messagingHelpers';
+import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 
@@ -225,13 +227,25 @@ export default function ChatConversationScreen({ route, navigation }) {
           />
         )}
         
-        <View style={[
-          styles.message,
-          isCurrentUser ? styles.currentUserMessage : styles.otherUserMessage
-        ]}>
-          <Text style={styles.messageText}>{item.text}</Text>
-          <Text style={styles.messageTime}>{formatTime(item.createdAt)}</Text>
-        </View>
+        {isCurrentUser ? (
+          <LinearGradient
+            colors={['#3B82F6', '#2563EB']}
+            style={[
+              styles.message,
+              styles.currentUserMessage
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <Text style={styles.messageText}>{item.text}</Text>
+            <Text style={styles.messageTime}>{formatTime(item.createdAt)}</Text>
+          </LinearGradient>
+        ) : (
+          <View style={[styles.message, styles.otherUserMessage]}>
+            <Text style={styles.messageText}>{item.text}</Text>
+            <Text style={styles.messageTime}>{formatTime(item.createdAt)}</Text>
+          </View>
+        )}
       </View>
     );
   };
@@ -251,8 +265,15 @@ export default function ChatConversationScreen({ route, navigation }) {
   
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar style="light" />
+      
       {/* Header */}
-      <View style={styles.header}>
+      <LinearGradient
+        colors={['#111827', '#1E293B']}
+        style={styles.header}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      >
         <IconButton
           icon="arrow-left"
           color="#FFFFFF"
@@ -274,12 +295,19 @@ export default function ChatConversationScreen({ route, navigation }) {
         </View>
         
         <View style={{ width: 40 }} />
-      </View>
+      </LinearGradient>
       
       {/* Messages */}
       {messages.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <MaterialCommunityIcons name="message-text-outline" size={60} color="#666" />
+          <LinearGradient
+            colors={['rgba(59, 130, 246, 0.1)', 'rgba(37, 99, 235, 0.05)']}
+            style={styles.emptyIconCircle}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <MaterialCommunityIcons name="message-text-outline" size={60} color="#3B82F6" />
+          </LinearGradient>
           <Text style={styles.emptyText}>No messages yet</Text>
           <Text style={styles.emptySubtext}>Send a message to start the conversation</Text>
         </View>
@@ -307,7 +335,14 @@ export default function ChatConversationScreen({ route, navigation }) {
       {/* Error message */}
       {error && (
         <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>{error}</Text>
+          <LinearGradient
+            colors={['#FF3B30', '#E11D48']}
+            style={styles.errorGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <Text style={styles.errorText}>{error}</Text>
+          </LinearGradient>
         </View>
       )}
       
@@ -316,7 +351,12 @@ export default function ChatConversationScreen({ route, navigation }) {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        <View style={styles.inputContainer}>
+        <LinearGradient
+          colors={['#181818', '#121212']}
+          style={styles.inputContainer}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+        >
           <TextInput
             style={styles.input}
             value={text}
@@ -335,13 +375,20 @@ export default function ChatConversationScreen({ route, navigation }) {
             onPress={handleSend}
             disabled={!text.trim() || sending}
           >
-            <MaterialCommunityIcons
-              name="send"
-              size={20}
-              color="#FFFFFF"
-            />
+            <LinearGradient
+              colors={['#3B82F6', '#2563EB']}
+              style={styles.sendButtonGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              <MaterialCommunityIcons
+                name="send"
+                size={20}
+                color="#FFFFFF"
+              />
+            </LinearGradient>
           </TouchableOpacity>
-        </View>
+        </LinearGradient>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -350,13 +397,13 @@ export default function ChatConversationScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
+    backgroundColor: '#0A0A0A',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#121212',
+    backgroundColor: '#0A0A0A',
   },
   emptyContainer: {
     flex: 1,
@@ -364,27 +411,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
+  emptyIconCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
   emptyText: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-    marginTop: 16,
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 8,
   },
   emptySubtext: {
     color: '#999',
-    fontSize: 14,
-    marginTop: 8,
+    fontSize: 16,
     textAlign: 'center',
+    maxWidth: 250,
   },
   header: {
-    backgroundColor: '#1A1A1A',
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 8,
-    paddingVertical: 12,
+    padding: 12,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
   },
   backIcon: {
-    marginRight: 8,
+    marginRight: 4,
   },
   headerInfo: {
     flex: 1,
@@ -392,14 +448,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    marginRight: 10,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#3B82F6',
+    marginRight: 12,
   },
   headerTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#FFFFFF',
     flex: 1,
   },
@@ -410,7 +468,7 @@ const styles = StyleSheet.create({
   messageContainer: {
     flexDirection: 'row',
     marginBottom: 16,
-    maxWidth: '80%',
+    maxWidth: '85%',
   },
   currentUserMessageContainer: {
     alignSelf: 'flex-end',
@@ -419,27 +477,27 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   messageAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     marginRight: 8,
   },
   message: {
-    padding: 12,
+    padding: 14,
     borderRadius: 20,
     maxWidth: '100%',
   },
   currentUserMessage: {
-    backgroundColor: '#3B82F6',
     borderBottomRightRadius: 4,
   },
   otherUserMessage: {
-    backgroundColor: '#2A2A2A',
+    backgroundColor: '#222222',
     borderBottomLeftRadius: 4,
   },
   messageText: {
     color: '#FFFFFF',
     fontSize: 16,
+    lineHeight: 22,
   },
   messageTime: {
     color: 'rgba(255, 255, 255, 0.6)',
@@ -451,45 +509,62 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
-    backgroundColor: '#1A1A1A',
     borderTopWidth: 1,
-    borderTopColor: '#333',
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
   },
   input: {
     flex: 1,
     backgroundColor: '#2A2A2A',
     borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 12,
     color: '#FFF',
     fontSize: 16,
     maxHeight: 120,
+    minHeight: 46,
   },
   sendButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#3B82F6',
+    marginLeft: 12,
+    borderRadius: 24,
+    overflow: 'hidden',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#3B82F6',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 3,
+      }
+    }),
+  },
+  sendButtonGradient: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 8,
   },
   sendButtonDisabled: {
-    backgroundColor: '#2A2A2A',
+    opacity: 0.5,
   },
   errorContainer: {
     position: 'absolute',
-    top: 60,
-    left: 0,
-    right: 0,
+    top: 80,
+    left: 20,
+    right: 20,
     alignItems: 'center',
+    zIndex: 100,
+  },
+  errorGradient: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
   },
   errorText: {
-    backgroundColor: 'rgba(255, 59, 48, 0.8)',
     color: 'white',
-    padding: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
     fontSize: 14,
+    fontWeight: '600',
   },
 });

@@ -21,6 +21,8 @@ import { doc, collection, query, where, orderBy, getDocs, getDoc } from 'firebas
 import { db } from '../Firebase/firebaseConfig';
 import { getUserConversations } from '../data/messagingHelpers';
 import { format } from 'date-fns';
+import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 
@@ -220,22 +222,31 @@ export default function MessagesScreen() {
   // Empty state component
   const renderEmptyComponent = () => (
     <View style={styles.emptyContainer}>
-      <MaterialCommunityIcons
-        name="chat-outline"
-        size={80}
-        color="#888"
-      />
+      <LinearGradient
+        colors={['rgba(59, 130, 246, 0.15)', 'rgba(37, 99, 235, 0.05)']}
+        style={styles.emptyIconContainer}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      >
+        <MaterialCommunityIcons name="chat-outline" size={80} color="#3B82F6" />
+      </LinearGradient>
       <Text style={styles.emptyTitle}>No conversations yet</Text>
       <Text style={styles.emptySubtitle}>
         Start a conversation with a friend to see it here
       </Text>
-      <Button
-        mode="contained"
-        onPress={startNewConversation}
+      <TouchableOpacity 
         style={styles.newChatButton}
+        onPress={startNewConversation}
       >
-        Start a New Chat
-      </Button>
+        <LinearGradient
+          colors={['#3B82F6', '#2563EB']}
+          style={styles.buttonGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <Text style={styles.buttonText}>Start a New Chat</Text>
+        </LinearGradient>
+      </TouchableOpacity>
     </View>
   );
   
@@ -249,90 +260,73 @@ export default function MessagesScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <SafeAreaView style={{ flex: 1 }}>
-        <View style={styles.header}>
-          <IconButton 
-            icon="arrow-left" 
-            size={24}
-            color="#FFFFFF"
-            onPress={() => navigation.goBack()}
-            style={styles.backIcon}
-          />
-          <Text style={styles.headerTitle}>Messages</Text>
-          <IconButton 
-            icon="plus" 
-            size={24}
-            color="#FFFFFF"
-            onPress={startNewConversation}
-          />
-        </View>
-        
-        {error ? (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-            <Button mode="contained" onPress={loadConversations} style={{ marginTop: 12 }}>
-              Try Again
-            </Button>
-          </View>
-        ) : (
-          <FlatList
-            data={conversations}
-            renderItem={renderItem}
-            keyExtractor={item => item.id}
-            contentContainerStyle={styles.listContent}
-            ListEmptyComponent={renderEmptyComponent}
-            ItemSeparatorComponent={() => <Divider style={styles.divider} />}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={handleRefresh}
-                colors={['#3B82F6']}
-                tintColor="#3B82F6"
-              />
-            }
-          />
-        )}
-      </SafeAreaView>
+    <SafeAreaView style={styles.container} edges={['top']}>
+      <StatusBar style="light" />
       
-      {/* Tab Bar Navigation - Matches the Tabs.js navigator */}
-      <View style={[
-        styles.tabBar, 
-        { height: 60 + bottomInset, paddingBottom: bottomInset }
-      ]}>
-        <TouchableOpacity 
-          style={styles.tabItem}
-          onPress={() => navigateToTab('Home')}
-        >
-          <MaterialCommunityIcons name="home-outline" size={24} color="#999" />
-          <Text style={styles.tabLabel}>Home</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.tabItem}
-          onPress={() => navigateToTab('Workout')}
-        >
-          <MaterialCommunityIcons name="dumbbell" size={24} color="#999" />
-          <Text style={styles.tabLabel}>Workout</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.tabItem}
-          onPress={() => navigateToTab('Community')}
-        >
-          <MaterialCommunityIcons name="account-group-outline" size={24} color="#999" />
-          <Text style={styles.tabLabel}>Community</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.tabItem}
-          onPress={() => navigateToTab('Profile')}
-        >
-          <MaterialCommunityIcons name="account-outline" size={24} color="#999" />
-          <Text style={styles.tabLabel}>Profile</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+      {/* Header with Gradient */}
+      <LinearGradient
+        colors={['#111827', '#1E293B']}
+        style={styles.header}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      >
+        <IconButton 
+          icon="arrow-left" 
+          size={24}
+          color="#FFFFFF"
+          onPress={() => navigation.goBack()}
+          style={styles.backIcon}
+        />
+        <Text style={styles.headerTitle}>Messages</Text>
+        <IconButton 
+          icon="plus" 
+          size={24}
+          color="#FFFFFF"
+          onPress={startNewConversation}
+        />
+      </LinearGradient>
+      
+      {/* Content */}
+      {error ? (
+        <View style={styles.errorContainer}>
+          <MaterialCommunityIcons name="alert-circle-outline" size={64} color="#FF3B30" />
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity 
+            style={styles.retryButton}
+            onPress={loadConversations}
+          >
+            <LinearGradient
+              colors={['#3B82F6', '#2563EB']}
+              style={styles.buttonGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              <Text style={styles.buttonText}>Try Again</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <FlatList
+          data={conversations}
+          renderItem={renderItem}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.listContent}
+          ListEmptyComponent={renderEmptyComponent}
+          ItemSeparatorComponent={() => <Divider style={styles.divider} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              colors={['#3B82F6']}
+              tintColor="#3B82F6"
+            />
+          }
+        />
+      )}
+      
+      {/* Bottom padding for iOS */}
+      <View style={{ height: bottomInset }} />
+    </SafeAreaView>
   );
 }
 
@@ -348,7 +342,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#121212',
   },
   header: {
-    backgroundColor: '#1A1A1A',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -441,6 +434,7 @@ const styles = StyleSheet.create({
   divider: {
     backgroundColor: '#333',
     height: 0.5,
+    marginLeft: 84,
   },
   emptyContainer: {
     flex: 1,
@@ -449,6 +443,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     paddingBottom: 40,
     paddingTop: 100,
+  },
+  emptyIconContainer: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
   },
   emptyTitle: {
     fontSize: 20,
@@ -464,8 +466,35 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   newChatButton: {
+    overflow: 'hidden',
+    borderRadius: 12,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#3B82F6',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 3,
+      }
+    }),
+  },
+  buttonGradient: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+  },
+  buttonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  retryButton: {
+    overflow: 'hidden',
+    borderRadius: 12,
     marginTop: 16,
-    backgroundColor: '#3B82F6',
   },
   errorContainer: {
     flex: 1,
@@ -477,31 +506,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#FF3B30',
     textAlign: 'center',
-    marginBottom: 8,
-  },
-  // Tab Bar styles - Matches the Tabs.js navigator
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: '#141414',
-    borderTopWidth: 0,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1, 
-    shadowRadius: 4,
-    elevation: 10,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-  },
-  tabItem: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  tabLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#999',
-    marginTop: 4,
-  },
+    marginVertical: 16,
+  }
 });

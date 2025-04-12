@@ -27,6 +27,36 @@ import { BlurView } from 'expo-blur';
 const { width } = Dimensions.get('window');
 const defaultAvatar = require('../assets/default-avatar.png');
 
+// Custom BlurComponent
+const BlurComponent = ({ intensity, style, children }) => {
+  if (Platform.OS === 'ios') {
+    try {
+      return (
+        <View style={[style, { overflow: 'hidden' }]}>
+          <BlurView intensity={intensity} tint="dark" style={StyleSheet.absoluteFill} />
+          <View style={StyleSheet.absoluteFill}>
+            {children}
+          </View>
+        </View>
+      );
+    } catch (error) {
+      console.log("BlurView error:", error);
+      return (
+        <View style={[style, { backgroundColor: 'rgba(15, 15, 15, 0.9)' }]}>
+          {children}
+        </View>
+      );
+    }
+  } else {
+    // For Android, use a regular View with semi-transparent background
+    return (
+      <View style={[style, { backgroundColor: 'rgba(15, 15, 15, 0.9)' }]}>
+        {children}
+      </View>
+    );
+  }
+};
+
 // Memoized workout item for better performance
 const WorkoutItem = memo(({ workout, onPress }) => {
   const date = workout.date ? new Date(workout.date.seconds * 1000) : new Date();
@@ -479,7 +509,7 @@ const ProfileScreen = ({ navigation }) => {
           }
         ]}
       >
-        <BlurView intensity={80} tint="dark" style={styles.blurView}>
+        <BlurComponent intensity={80} style={styles.blurView}>
           <View style={styles.stickyHeaderContent}>
             <Text style={styles.stickyTitle}>{user?.displayName || 'Profile'}</Text>
             
@@ -497,7 +527,7 @@ const ProfileScreen = ({ navigation }) => {
               <MaterialCommunityIcons name="cog" size={22} color="#FFF" />
             </TouchableOpacity>
           </View>
-        </BlurView>
+        </BlurComponent>
       </Animated.View>
       
       {/* Main scroll content */}

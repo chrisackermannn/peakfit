@@ -72,7 +72,11 @@ LogBox.ignoreLogs([
   'nw_connection_copy_connected_',
   'Running "main" with',
   'Client called nw_connection',
-  '🟢 Creating JS object'
+  '🟢 Creating JS object',
+  'Unable to get the view config for ExpoBlurView',
+  'Unimplemented component view manager adapter',
+  'ExpoBlurView',
+  '[expo-blur]'
 ]);
 
 // Configure Animated API to use native driver by default

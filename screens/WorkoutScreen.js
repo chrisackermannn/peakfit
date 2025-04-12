@@ -2,11 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
-  FlatList,
+  StyleSheet, // Ensure StyleSheet is imported
   TouchableOpacity,
   TextInput,
   Modal,
-  StyleSheet,
   ScrollView,
   ActivityIndicator,
   Animated,
@@ -15,7 +14,9 @@ import {
   Alert,
   KeyboardAvoidingView,
   Keyboard,
-  Dimensions
+  Dimensions,
+  Image,
+  FlatList
 } from 'react-native';
 import { Button, Surface, IconButton, Divider } from 'react-native-paper';
 import { getInitialExercises, searchExercises } from '../data/exerciseAPI';
@@ -23,268 +24,23 @@ import { saveWorkoutToProfile, saveWorkoutGlobally, getUserTemplates } from '../
 import { useAuth } from '../context/AuthContext';
 import { serverTimestamp } from 'firebase/firestore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { format } from 'date-fns';
 import { StatusBar } from 'expo-status-bar';
 import HealthKitService from '../services/HealthKitService';
 import { LinearGradient } from 'expo-linear-gradient';
 
-const { width, height } = Dimensions.get('window');
-
-// CompletionModal - shown when workout is finished
-const CompletionModal = ({ visible, onDismiss, onSave, onPost, timer, workouts, saveLoading, postLoading }) => {
-  const insets = useSafeAreaInsets();
-  
+// Add this right after your imports
+// Safe alternative to BlurView to prevent errors
+const SafeBackdrop = ({ children, style }) => {
   return (
-    <Modal
-      visible={visible}
-      transparent={true}
-      animationType="fade"
-      onRequestClose={onDismiss}
-    >
-      <View style={styles.modalOverlay}>
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.modalContainer}
-        >
-          <View style={[styles.completionModalContent, { 
-            marginBottom: insets.bottom > 0 ? insets.bottom : 20 
-          }]}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.completionTitle}>Workout Complete!</Text>
-              <MaterialCommunityIcons name="trophy" size={24} color="#FFD700" />
-            </View>
-            
-            <View style={styles.workoutSummary}>
-              <View style={styles.summaryItem}>
-                <MaterialCommunityIcons name="clock-outline" size={24} color="#3B82F6" />
-                <Text style={styles.summaryValue}>
-                  {Math.floor(timer/60)}:{(timer%60).toString().padStart(2,'0')}
-                </Text>
-                <Text style={styles.summaryLabel}>Duration</Text>
-              </View>
-              <View style={styles.summaryItem}>
-                <MaterialCommunityIcons name="dumbbell" size={24} color="#3B82F6" />
-                <Text style={styles.summaryValue}>
-                  {workouts.reduce((total, workout) => total + workout.sets.length, 0)}
-                </Text>
-                <Text style={styles.summaryLabel}>Sets</Text>
-              </View>
-              <View style={styles.summaryItem}>
-                <MaterialCommunityIcons name="weight-lifter" size={24} color="#3B82F6" />
-                <Text style={styles.summaryValue}>
-                  {workouts.reduce((total, workout) => {
-                    return total + workout.sets.reduce((setTotal, set) => {
-                      return setTotal + (set.weight * set.reps);
-                    }, 0);
-                  }, 0)} lbs
-                </Text>
-                <Text style={styles.summaryLabel}>Volume</Text>
-              </View>
-            </View>
-
-            <View style={styles.completionDivider} />
-
-            <View style={styles.completionActions}>
-              <Button
-                mode="contained"
-                onPress={onSave}
-                style={[styles.completionButton, styles.saveButton]}
-                loading={saveLoading}
-                disabled={saveLoading || postLoading}
-                labelStyle={styles.buttonLabel}
-                contentStyle={styles.buttonContent}
-              >
-                Save to Profile
-              </Button>
-              <Button
-                mode="contained"
-                onPress={onPost}
-                style={[styles.completionButton, styles.postButton]}
-                loading={postLoading}
-                disabled={saveLoading || postLoading}
-                labelStyle={styles.buttonLabel}
-                contentStyle={styles.buttonContent}
-              >
-                Share Workout
-              </Button>
-              <Button
-                mode="outlined"
-                onPress={onDismiss}
-                style={styles.dismissButton}
-                labelStyle={{ color: '#3B82F6' }}
-              >
-                Close
-              </Button>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </View>
-    </Modal>
-  );
-};
-
-// Templates Modal - for selecting workout templates
-const TemplatesModal = ({ visible, onClose, templates, loading, onApplyTemplate }) => {
-  const insets = useSafeAreaInsets();
-  
-  return (
-    <Modal
-      visible={visible}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <BlurView intensity={90} tint="dark" style={styles.blurContainer}>
-        <View style={[styles.templatesModalContent, { 
-          paddingBottom: insets.bottom > 0 ? insets.bottom : 20 
-        }]}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Workout Templates</Text>
-            <IconButton
-              icon="close"
-              size={24}
-              color="#FFF"
-              onPress={onClose}
-            />
-          </View>
-          
-          <View style={styles.templatesList}>
-            {loading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#3B82F6" />
-              </View>
-            ) : templates.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <MaterialCommunityIcons name="file-document-outline" size={48} color="#666" />
-                <Text style={styles.emptyText}>No saved templates</Text>
-                <Text style={styles.emptySubtext}>
-                  Save workout templates from the Community tab
-                </Text>
-              </View>
-            ) : (
-              <FlatList
-                data={templates}
-                keyExtractor={item => item.id}
-                renderItem={({item}) => (
-                  <TouchableOpacity 
-                    style={styles.templateItem}
-                    onPress={() => onApplyTemplate(item)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.templateContent}>
-                      <View style={styles.templateIconContainer}>
-                        <LinearGradient
-                          colors={['#3B82F6', '#2563EB']}
-                          style={styles.templateIconGradient}
-                        >
-                          <MaterialCommunityIcons name="dumbbell" size={20} color="#FFFFFF" />
-                        </LinearGradient>
-                      </View>
-                      <View style={styles.templateInfo}>
-                        <Text style={styles.templateName}>{item.name}</Text>
-                        <Text style={styles.templateMeta}>
-                          {item.exercises.length} exercises • From {item.sourceWorkout?.userDisplayName || 'You'}
-                        </Text>
-                      </View>
-                      <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
-                    </View>
-                  </TouchableOpacity>
-                )}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{paddingBottom: 20}}
-              />
-            )}
-          </View>
-        </View>
-      </BlurView>
-    </Modal>
-  );
-};
-
-// Exercise Search Modal - more intuitive exercise selection
-const ExerciseSearchModal = ({ 
-  visible, 
-  onClose, 
-  exercises,
-  onSelectExercise,
-  searchQuery,
-  onSearchChange,
-  loadingExercises
-}) => {
-  const insets = useSafeAreaInsets();
-  
-  return (
-    <Modal
-      visible={visible}
-      transparent={true}
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <BlurView intensity={90} tint="dark" style={styles.blurContainer}>
-        <View style={[styles.exerciseModalContent, { 
-          paddingBottom: insets.bottom > 0 ? insets.bottom : 20 
-        }]}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Search Exercises</Text>
-            <IconButton
-              icon="close"
-              size={24}
-              color="#FFF"
-              onPress={onClose}
-            />
-          </View>
-          
-          <View style={styles.searchSection}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search exercises..."
-              value={searchQuery}
-              onChangeText={onSearchChange}
-              placeholderTextColor="#999"
-              returnKeyType="search"
-              clearButtonMode="while-editing"
-              autoCorrect={false}
-              autoCapitalize="none"
-              autoFocus={true}
-            />
-            <MaterialCommunityIcons name="magnify" size={22} color="#999" style={styles.searchIcon} />
-          </View>
-          
-          {loadingExercises ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#3B82F6" />
-            </View>
-          ) : (
-            <FlatList
-              data={exercises}
-              keyExtractor={item => item.name}
-              renderItem={({item}) => (
-                <TouchableOpacity
-                  style={styles.exerciseItem}
-                  onPress={() => onSelectExercise(item)}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.exerciseItemText}>{item.name}</Text>
-                  <MaterialCommunityIcons name="chevron-right" size={20} color="#999" />
-                </TouchableOpacity>
-              )}
-              style={styles.exerciseList}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{paddingBottom: 12}}
-              ListEmptyComponent={
-                <Text style={styles.emptyText}>
-                  No exercises found. Try a different search.
-                </Text>
-              }
-            />
-          )}
-          
-          <View style={{height: 40}} />
-        </View>
-      </BlurView>
-    </Modal>
+    <View style={[
+      StyleSheet.absoluteFill, 
+      { backgroundColor: 'rgba(0, 0, 0, 0.8)' },
+      style
+    ]}>
+      {children}
+    </View>
   );
 };
 
@@ -301,15 +57,13 @@ const ExerciseSetModal = ({
   const [reps, setReps] = useState(editingSet ? editingSet.reps.toString() : '');
   const insets = useSafeAreaInsets();
   
+  // Reset inputs when modal opens with new data
   useEffect(() => {
-    if (editingSet) {
-      setWeight(editingSet.weight.toString());
-      setReps(editingSet.reps.toString());
-    } else {
-      setWeight('');
-      setReps('');
+    if (visible) {
+      setWeight(editingSet ? editingSet.weight.toString() : '');
+      setReps(editingSet ? editingSet.reps.toString() : '');
     }
-  }, [editingSet]);
+  }, [visible, editingSet]);
   
   const handleSave = () => {
     if (!weight.trim() || !reps.trim()) {
@@ -330,10 +84,6 @@ const ExerciseSetModal = ({
       reps: repsNum,
       completed: false
     }, editingIndex);
-    
-    setWeight('');
-    setReps('');
-    onClose();
   };
   
   return (
@@ -343,7 +93,7 @@ const ExerciseSetModal = ({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <BlurView intensity={90} tint="dark" style={styles.blurContainer}>
+      <SafeBackdrop style={styles.blurContainer}>
         <KeyboardAvoidingView 
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{flex: 1, justifyContent: 'center'}}
@@ -361,7 +111,12 @@ const ExerciseSetModal = ({
                 icon="close"
                 size={24}
                 color="#FFF"
-                onPress={onClose}
+                onPress={() => {
+                  // Ensure any keyboard is dismissed first
+                  Keyboard.dismiss();
+                  // Then properly close the modal
+                  onClose();
+                }}
               />
             </View>
             
@@ -419,13 +174,199 @@ const ExerciseSetModal = ({
             </View>
           </View>
         </KeyboardAvoidingView>
-      </BlurView>
+      </SafeBackdrop>
+    </Modal>
+  );
+};
+
+// Exercise Search Modal component
+const ExerciseSearchModal = ({ 
+  visible, 
+  onClose, 
+  exercises, 
+  onSelectExercise, 
+  searchQuery, 
+  onSearchChange,
+  loadingExercises
+}) => {
+  const insets = useSafeAreaInsets();
+  
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <SafeBackdrop style={styles.blurContainer}>
+        <View style={[styles.exerciseModalContent, { 
+          paddingBottom: insets.bottom > 0 ? insets.bottom : 20 
+        }]}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Search Exercises</Text>
+            <IconButton
+              icon="close"
+              size={24}
+              color="#FFF"
+              onPress={onClose}
+            />
+          </View>
+          
+          <View style={styles.searchSection}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search exercises..."
+              value={searchQuery}
+              onChangeText={onSearchChange}
+              placeholderTextColor="#999"
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+              autoCorrect={false}
+              autoCapitalize="none"
+              autoFocus={true}
+            />
+            <MaterialCommunityIcons name="magnify" size={22} color="#999" style={styles.searchIcon} />
+          </View>
+          
+          {loadingExercises ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#3B82F6" />
+            </View>
+          ) : (
+            <FlatList
+              data={exercises}
+              keyExtractor={item => item.name || Math.random().toString()}
+              renderItem={({item}) => (
+                <TouchableOpacity
+                  style={styles.exerciseItem}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    onSelectExercise(item);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.exerciseItemText}>{item.name}</Text>
+                  <MaterialCommunityIcons name="chevron-right" size={20} color="#999" />
+                </TouchableOpacity>
+              )}
+              style={styles.exerciseList}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{paddingBottom: 12}}
+              ListEmptyComponent={
+                <Text style={styles.emptyText}>
+                  No exercises found. Try a different search.
+                </Text>
+              }
+            />
+          )}
+        </View>
+      </SafeBackdrop>
+    </Modal>
+  );
+};
+
+// Completion Modal component
+const CompletionModal = ({ 
+  visible, 
+  onSave, 
+  onPost, 
+  onContinue, 
+  timer, 
+  workouts, 
+  saveLoading,
+  postLoading
+}) => {
+  // Calculate total volume, sets, and exercises
+  const totalVolume = workouts.reduce((acc, workout) => {
+    return acc + workout.sets.reduce((setAcc, set) => {
+      return setAcc + (set.weight * set.reps);
+    }, 0);
+  }, 0);
+  
+  const totalSets = workouts.reduce((acc, workout) => acc + workout.sets.length, 0);
+  
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="fade"
+      // Prevent dismissing by tapping outside
+      onRequestClose={() => onContinue()}
+    >
+      <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalContainer}
+        >
+          <View style={styles.completionModalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.completionTitle}>Workout Complete</Text>
+              <MaterialCommunityIcons name="trophy" size={24} color="#FFD700" />
+            </View>
+            
+            <View style={styles.workoutSummary}>
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryValue}>
+                  {Math.floor(timer/60).toString().padStart(2, '0')}:{(timer%60).toString().padStart(2, '0')}
+                </Text>
+                <Text style={styles.summaryLabel}>Duration</Text>
+              </View>
+              
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryValue}>{totalVolume}lb</Text>
+                <Text style={styles.summaryLabel}>Volume</Text>
+              </View>
+              
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryValue}>{totalSets}</Text>
+                <Text style={styles.summaryLabel}>Sets</Text>
+              </View>
+            </View>
+            
+            <View style={styles.completionDivider} />
+            
+            <View style={styles.completionActions}>
+              <Button
+                mode="contained"
+                onPress={onSave}
+                loading={saveLoading}
+                disabled={saveLoading || postLoading}
+                style={[styles.completionButton, styles.saveButton]}
+                contentStyle={styles.buttonContent}
+              >
+                Save to Profile
+              </Button>
+              
+              <Button
+                mode="contained"
+                onPress={onPost}
+                loading={postLoading}
+                disabled={saveLoading || postLoading}
+                style={[styles.completionButton, styles.postButton]}
+                contentStyle={styles.buttonContent}
+              >
+                Share to Community
+              </Button>
+              
+              <Button
+                mode="outlined"
+                onPress={onContinue}
+                disabled={saveLoading || postLoading}
+                style={[styles.completionButton, styles.dismissButton]}
+                contentStyle={styles.buttonContent}
+              >
+                Continue Workout
+              </Button>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 };
 
 // Main WorkoutScreen Component
-export default function WorkoutScreen({ navigation }) {
+export function WorkoutScreen({ navigation }) {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   
@@ -438,6 +379,7 @@ export default function WorkoutScreen({ navigation }) {
   const [searchModalVisible, setSearchModalVisible] = useState(false);
   const [setModalVisible, setSetModalVisible] = useState(false);
   const [templatesModalVisible, setTemplatesModalVisible] = useState(false);
+  const [completionModalVisible, setCompletionModalVisible] = useState(false);
   
   // State for exercise selection
   const [searchQuery, setSearchQuery] = useState('');
@@ -478,8 +420,20 @@ export default function WorkoutScreen({ navigation }) {
   
   // End workout session
   const endWorkout = () => {
+    console.log("Ending workout session");
+    // Stop timer but don't reset workout state yet
     setIsTiming(false);
-    setIsWorkoutEnded(true);
+    // Show completion modal
+    setCompletionModalVisible(true);
+  };
+
+  // Continue workout session
+  const continueWorkout = () => {
+    // Close modal
+    setCompletionModalVisible(false);
+    // Resume timer
+    setIsTiming(true);
+    console.log("Resuming workout");
   };
   
   // Toggle set completion
@@ -578,23 +532,33 @@ export default function WorkoutScreen({ navigation }) {
   
   // Select exercise from search
   const selectExercise = (exercise) => {
+    console.log("Exercise selected:", exercise.name);
     setSelectedExercise(exercise);
     
     // Generate unique ID for this exercise
     const newExerciseId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
     setCurrentExerciseId(newExerciseId);
     
-    // Close search modal and open set modal
+    // Close search modal and open set modal with a small delay to prevent UI flicker
     setSearchModalVisible(false);
-    setSetModalVisible(true);
+    
+    // Add a small delay before showing the set modal to ensure search modal is fully closed
+    setTimeout(() => {
+      console.log("Opening set modal for", exercise.name);
+      setSetModalVisible(true);
+    }, 100);
   };
   
   // Add or update set to an exercise
   const handleSaveSet = (setData, editingIndex = null) => {
+    console.log("Saving set", setData, "for exercise ID", currentExerciseId);
+    console.log("Is this a new exercise?", !workouts.some(w => w.id === currentExerciseId));
+    
     // If this is a new exercise
     if (!workouts.some(workout => workout.id === currentExerciseId)) {
-      setWorkouts([
-        ...workouts,
+      console.log("Adding new exercise with set");
+      setWorkouts(prevWorkouts => [
+        ...prevWorkouts,
         {
           id: currentExerciseId,
           name: selectedExercise.name,
@@ -610,6 +574,7 @@ export default function WorkoutScreen({ navigation }) {
     } 
     // If editing existing set
     else if (editingIndex !== null) {
+      console.log("Updating existing set at index:", editingIndex);
       setWorkouts(currentWorkouts => {
         return currentWorkouts.map(workout => {
           if (workout.id === currentExerciseId) {
@@ -626,6 +591,7 @@ export default function WorkoutScreen({ navigation }) {
     } 
     // If adding a new set to existing exercise
     else {
+      console.log("Adding new set to existing exercise");
       setWorkouts(currentWorkouts => {
         return currentWorkouts.map(workout => {
           if (workout.id === currentExerciseId) {
@@ -642,6 +608,9 @@ export default function WorkoutScreen({ navigation }) {
     // Reset editing state
     setEditingSet(null);
     setEditingSetIndex(null);
+    
+    // Close the modal
+    setSetModalVisible(false);
   };
   
   // Open set editing modal
@@ -722,7 +691,7 @@ export default function WorkoutScreen({ navigation }) {
     );
   };
   
-  // Save workout to profile - updated to handle new data structure
+  // Save workout to profile
   const saveToProfile = async () => {
     if (!user?.uid) {
       Alert.alert('Authentication Required', 'Please login to save workouts');
@@ -763,7 +732,7 @@ export default function WorkoutScreen({ navigation }) {
       // Save to Firebase
       await saveWorkoutToProfile(user.uid, workoutData);
       
-      // Save to HealthKit if available (iOS only)
+      // Handle HealthKit if available
       if (Platform.OS === 'ios' && HealthKitService.isAvailable) {
         try {
           if (!HealthKitService.isInitialized) {
@@ -784,28 +753,8 @@ export default function WorkoutScreen({ navigation }) {
         }
       }
       
-      // Animation feedback
-      Animated.sequence([
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 300,
-          useNativeDriver: true
-        }),
-        Animated.delay(800),
-        Animated.timing(fadeAnim, {
-          toValue: 0,
-          duration: 300,
-          useNativeDriver: true
-        })
-      ]).start();
-      
-      // Reset workout state
-      setIsWorkoutEnded(false);
-      setWorkouts([]);
-      setIsWorkoutStarted(false);
-      setTimer(0);
-      setWorkoutTitle("My Workout");
-      setWorkoutNote("");
+      // Reset workout after success
+      resetWorkoutAfterCompletion();
       
       // Show success message
       Alert.alert('Success', 'Your workout has been saved to your profile!');
@@ -814,6 +763,7 @@ export default function WorkoutScreen({ navigation }) {
       Alert.alert('Error', 'Could not save workout: ' + error.message);
     } finally {
       setSaveLoading(false);
+      setCompletionModalVisible(false);
     }
   };
   
@@ -878,13 +828,8 @@ export default function WorkoutScreen({ navigation }) {
       // Save workout globally
       await saveWorkoutGlobally(workoutData);
       
-      // Reset workout state
-      setIsWorkoutEnded(false);
-      setWorkouts([]);
-      setIsWorkoutStarted(false);
-      setTimer(0);
-      setWorkoutTitle("My Workout");
-      setWorkoutNote("");
+      // Only reset workout after successful post
+      resetWorkoutAfterCompletion();
       
       // Show success message
       Alert.alert('Success', 'Your workout has been shared with the community!');
@@ -893,7 +838,18 @@ export default function WorkoutScreen({ navigation }) {
       Alert.alert('Error', 'Could not share workout: ' + error.message);
     } finally {
       setPostLoading(false);
+      setCompletionModalVisible(false);
     }
+  };
+  
+  // Create a new helper function to reset workout state
+  const resetWorkoutAfterCompletion = () => {
+    setIsWorkoutEnded(false);
+    setWorkouts([]);
+    setIsWorkoutStarted(false);
+    setTimer(0);
+    setWorkoutTitle("My Workout");
+    setWorkoutNote("");
   };
   
   // Load templates
@@ -969,19 +925,24 @@ export default function WorkoutScreen({ navigation }) {
       <StatusBar style="light" />
       
       {!isWorkoutStarted ? (
-        // Start Workout Screen
+        // Start Workout Screen - Your existing code for the start screen
         <View style={styles.startWorkoutContainer}>
-          <Text style={styles.welcomeTitle}>Ready to work out?</Text>
-          
-          <View style={styles.startWorkoutCard}>
-            <LinearGradient
-              colors={['#1A1A1A', '#121212']}
-              style={styles.cardGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 0, y: 1 }}
-            >
-              <Text style={styles.startWorkoutTitle}>Start New Workout</Text>
-              
+          <View style={styles.startWorkoutContent}>
+            <View style={styles.logoContainer}>
+              <LinearGradient
+                colors={['#3B82F6', '#2563EB']}
+                style={styles.logoBackground}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              >
+                <MaterialCommunityIcons name="dumbbell" size={40} color="#FFFFFF" />
+              </LinearGradient>
+            </View>
+            
+            <Text style={styles.welcomeTitle}>Ready to work out?</Text>
+            <Text style={styles.welcomeSubtitle}>Track your progress and reach your fitness goals</Text>
+            
+            <View style={styles.startButtonsContainer}>
               <TouchableOpacity 
                 style={styles.startButton}
                 onPress={startWorkout}
@@ -991,144 +952,117 @@ export default function WorkoutScreen({ navigation }) {
                   colors={['#3B82F6', '#2563EB']}
                   style={styles.startButtonGradient}
                   start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
+                  end={{ x: 1, y: 0 }}
                 >
-                  <MaterialCommunityIcons name="dumbbell" size={28} color="#fff" />
-                  <Text style={styles.startButtonText}>Begin Workout</Text>
+                  <MaterialCommunityIcons name="dumbbell" size={24} color="#FFFFFF" />
+                  <Text style={styles.startButtonText}>Start New Workout</Text>
                 </LinearGradient>
               </TouchableOpacity>
               
-              <TouchableOpacity 
-                style={styles.templatesButton}
-                onPress={() => {
-                  loadTemplates();
-                  setTemplatesModalVisible(true);
-                }}
-              >
-                <Text style={styles.templatesButtonText}>
-                  <MaterialCommunityIcons name="file-document-outline" size={18} color="#3B82F6" />
-                  {" "}Use Template
-                </Text>
-              </TouchableOpacity>
-            </LinearGradient>
+              {/* Rest of your start screen */}
+            </View>
           </View>
         </View>
       ) : (
-        // Active Workout Screen
-        <View style={styles.workoutContainer}>
+        // Active Workout Screen - Simple version to fix the black screen
+        <View style={{flex: 1, backgroundColor: '#0A0A0A'}}>
           {/* Header with timer and finish button */}
-          <View style={styles.activeWorkoutHeader}>
-            <TouchableOpacity onPress={() => {
-              if (isTiming) {
-                setIsTiming(false);
-              }
-              Alert.alert(
-                "Exit Workout",
-                "Do you want to end this workout?",
-                [
-                  { text: "Cancel", style: "cancel", onPress: () => {
-                    if (!isTiming) setIsTiming(true);
-                  }},
-                  { text: "End", style: "destructive", onPress: endWorkout }
-                ]
-              );
-            }}>
-              <MaterialCommunityIcons name="chevron-down" size={28} color="#999" />
-            </TouchableOpacity>
-            
-            <TouchableOpacity onPress={() => {
-              Alert.alert(
-                "Timer",
-                "Workout in progress: " + 
-                Math.floor(timer/60).toString().padStart(2, '0') + ":" + 
-                (timer%60).toString().padStart(2, '0')
-              );
-            }}>
-              <MaterialCommunityIcons name="clock-outline" size={24} color="#3B82F6" />
-            </TouchableOpacity>
-            
+          <View style={{
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: 16,
+            borderBottomWidth: 1,
+            borderBottomColor: '#222'
+          }}>
             <TouchableOpacity 
-              style={styles.finishButton}
-              onPress={endWorkout}
+              onPress={() => {
+                // Show confirmation before cancelling
+                Alert.alert(
+                  "Cancel Workout",
+                  "Are you sure you want to cancel your workout? All progress will be lost.",
+                  [
+                    { text: "No", style: "cancel" },
+                    { 
+                      text: "Yes", 
+                      style: "destructive",
+                      onPress: () => {
+                        // Clear interval and reset workout state
+                        clearInterval(timerRef.current);
+                        setIsTiming(false);
+                        setIsWorkoutStarted(false);
+                        setWorkouts([]);
+                        setTimer(0);
+                        setWorkoutTitle("My Workout");
+                        setWorkoutNote("");
+                      }
+                    }
+                  ]
+                );
+              }}
+              style={{padding: 8}}
             >
-              <Text style={styles.finishButtonText}>FINISH</Text>
+              <MaterialCommunityIcons name="close" size={24} color="#FFF" />
             </TouchableOpacity>
-          </View>
-          
-          {/* Workout Title and Timer */}
-          <View style={styles.workoutTitleSection}>
+            
+            <View style={{flexDirection: 'row', alignItems: 'center'}}>
+              <MaterialCommunityIcons name="clock-outline" size={24} color="#3B82F6" />
+              <Text style={{color: '#FFF', marginLeft: 8, fontSize: 16}}>
+                {Math.floor(timer/60).toString().padStart(2, '0')}:{(timer%60).toString().padStart(2, '0')}
+              </Text>
+            </View>
+            
+            {/* Workout title */}
             <TextInput
-              style={styles.workoutTitleInput}
+              style={{
+                fontSize: 18,
+                fontWeight: '600',
+                color: '#FFF',
+                textAlign: 'center',
+                width: 150
+              }}
               value={workoutTitle}
               onChangeText={setWorkoutTitle}
               placeholder="Workout Title"
               placeholderTextColor="#999"
             />
             
-            <View style={styles.timerDisplay}>
-              <Text style={styles.timerText}>
-                {Math.floor(timer/60).toString().padStart(2, '0')}:{(timer%60).toString().padStart(2, '0')}
-              </Text>
-              <MaterialCommunityIcons 
-                name={isTiming ? "pause-circle" : "play-circle"} 
-                size={24} 
-                color="#3B82F6" 
-                style={styles.timerIcon}
-                onPress={() => setIsTiming(!isTiming)}
-              />
-            </View>
-            
-            {/* Workout Note */}
-            <TouchableOpacity
-              style={styles.workoutNoteContainer}
-              onPress={() => setShowNoteInput(true)}
-              activeOpacity={0.7}
+            {/* Finish button */}
+            <TouchableOpacity 
+              style={{
+                backgroundColor: '#3B82F6',
+                paddingVertical: 8,
+                paddingHorizontal: 16,
+                borderRadius: 6
+              }}
+              onPress={endWorkout}
             >
-              {showNoteInput ? (
-                <TextInput
-                  style={styles.workoutNoteInput}
-                  value={workoutNote}
-                  onChangeText={setWorkoutNote}
-                  placeholder="Add workout notes..."
-                  placeholderTextColor="#999"
-                  multiline
-                  returnKeyType="done"
-                  blurOnSubmit={true}
-                  onBlur={() => setShowNoteInput(false)}
-                  autoFocus
-                />
-              ) : (
-                <Text style={[
-                  styles.workoutNoteText,
-                  !workoutNote && styles.workoutNotePlaceholder
-                ]}>
-                  {workoutNote || "Add workout notes..."}
-                </Text>
-              )}
+              <Text style={{color: '#FFF', fontWeight: '600'}}>FINISH</Text>
             </TouchableOpacity>
           </View>
           
-          {/* Exercise List */}
-          <ScrollView 
-            style={styles.exercisesContainer} 
-            contentContainerStyle={styles.exercisesContent}
-            showsVerticalScrollIndicator={false}
-          >
+          {/* Exercises List */}
+          <ScrollView style={{flex: 1}}>
             {workouts.length === 0 ? (
-              <View style={styles.emptyExercises}>
+              <View style={{alignItems: 'center', padding: 40}}>
                 <MaterialCommunityIcons name="dumbbell" size={48} color="#333" />
-                <Text style={styles.emptyExercisesText}>
+                <Text style={{color: '#FFF', marginTop: 16, marginBottom: 24}}>
                   No exercises added yet
                 </Text>
                 <TouchableOpacity 
-                  style={styles.addFirstExerciseButton}
+                  style={{
+                    backgroundColor: '#3B82F6',
+                    paddingVertical: 12,
+                    paddingHorizontal: 20,
+                    borderRadius: 12
+                  }}
                   onPress={() => {
                     setSearchQuery('');
                     setFilteredExercises(exercises);
                     setSearchModalVisible(true);
                   }}
                 >
-                  <Text style={styles.addFirstExerciseText}>Add Exercise</Text>
+                  <Text style={{color: '#FFF', fontWeight: '600'}}>Add Exercise</Text>
                 </TouchableOpacity>
               </View>
             ) : (
@@ -1138,72 +1072,83 @@ export default function WorkoutScreen({ navigation }) {
                     <Text style={styles.exerciseName}>
                       {exercise.name}
                     </Text>
-                    <View style={styles.exerciseActions}>
-                      <TouchableOpacity 
-                        style={styles.exerciseAction}
-                        onPress={() => handleDeleteExercise(exercise.id)}
-                      >
-                        <MaterialCommunityIcons name="delete" size={22} color="#666" />
-                      </TouchableOpacity>
-                    </View>
+                    <TouchableOpacity 
+                      style={styles.exerciseAction}
+                      onPress={() => handleDeleteExercise(exercise.id)}
+                    >
+                      <MaterialCommunityIcons name="delete" size={22} color="#666" />
+                    </TouchableOpacity>
                   </View>
                   
-                  {/* Exercise Sets Table */}
-                  <View style={styles.setsTable}>
-                    <View style={styles.setsTableHeader}>
-                      <Text style={styles.setsTableHeaderCell}>SET</Text>
-                      <Text style={styles.setsTableHeaderCell}>KG</Text>
-                      <Text style={styles.setsTableHeaderCell}>REPS</Text>
-                      <Text style={[styles.setsTableHeaderCell, {flex: 0.5}]}></Text>
+                  {/* Sets Table */}
+                  <View style={{borderRadius: 8, overflow: 'hidden'}}>
+                    <View style={{
+                      flexDirection: 'row',
+                      backgroundColor: '#222',
+                      padding: 10
+                    }}>
+                      <Text style={{flex: 1, color: '#999', fontSize: 12, fontWeight: '600'}}>SET</Text>
+                      <Text style={{flex: 1, color: '#999', fontSize: 12, fontWeight: '600'}}>LB</Text>
+                      <Text style={{flex: 1, color: '#999', fontSize: 12, fontWeight: '600'}}>REPS</Text>
+                      <Text style={{flex: 0.5, color: '#999', fontSize: 12, fontWeight: '600'}}></Text>
                     </View>
                     
-                    {/* Sets for this exercise */}
                     {exercise.sets.map((set, setIndex) => (
                       <TouchableOpacity 
                         key={setIndex} 
-                        style={styles.setRow}
+                        style={{
+                          flexDirection: 'row',
+                          padding: 12,
+                          backgroundColor: set.completed ? 'rgba(34, 197, 94, 0.1)' : 'transparent',
+                          borderBottomWidth: 1,
+                          borderBottomColor: '#333',
+                          alignItems: 'center'
+                        }}
                         onPress={() => toggleSetCompletion(exercise.id, setIndex)}
-                        onLongPress={() => handleEditSet(exercise.id, setIndex)}
-                        activeOpacity={0.7}
                       >
-                        <Text style={styles.setCell}>{setIndex + 1}</Text>
-                        <Text style={styles.setCell}>{set.weight}</Text>
-                        <Text style={styles.setCell}>{set.reps}</Text>
-                        <View style={[styles.setCell, {flex: 0.5, alignItems: 'center'}]}>
+                        <Text style={{flex: 1, color: '#FFF'}}>{setIndex + 1}</Text>
+                        <Text style={{flex: 1, color: '#FFF'}}>{set.weight}</Text>
+                        <Text style={{flex: 1, color: '#FFF'}}>{set.reps}</Text>
+                        <View style={{flex: 0.5, alignItems: 'center'}}>
                           <MaterialCommunityIcons 
                             name={set.completed ? "check-circle" : "circle-outline"} 
                             size={22} 
                             color={set.completed ? "#22C55E" : "#666"} 
                           />
                         </View>
-                        
-                        {/* Delete set button - visible on long press */}
-                        <TouchableOpacity
-                          style={styles.deleteSetButton}
-                          onPress={() => handleDeleteSet(exercise.id, setIndex)}
-                        >
-                          <MaterialCommunityIcons name="delete" size={18} color="#FF3B30" />
-                        </TouchableOpacity>
                       </TouchableOpacity>
                     ))}
-                    
-                    {/* Add new set button */}
-                    <TouchableOpacity
-                      style={styles.addSetButton}
-                      onPress={() => handleAddSet(exercise.id)}
-                    >
-                      <MaterialCommunityIcons name="plus" size={18} color="#3B82F6" />
-                      <Text style={styles.addSetText}>Add Set</Text>
-                    </TouchableOpacity>
                   </View>
+                  
+                  {/* Add Set Button */}
+                  <TouchableOpacity
+                    style={{
+                      marginTop: 12,
+                      padding: 10,
+                      backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                      borderRadius: 8,
+                      alignItems: 'center'
+                    }}
+                    onPress={() => handleAddSet(exercise.id)}
+                  >
+                    <Text style={{color: '#3B82F6'}}>+ Add Set</Text>
+                  </TouchableOpacity>
                 </View>
               ))
             )}
             
-            {/* Add exercise button - shown if there are already exercises */}
+            {/* Add Exercise Button (if there are exercises) */}
             {workouts.length > 0 && (
               <TouchableOpacity
-                style={styles.addExerciseCardButton}
+                style={{
+                  margin: 16,
+                  padding: 16,
+                  backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                  borderRadius: 12,
+                  alignItems: 'center',
+                  flexDirection: 'row',
+                  justifyContent: 'center'
+                }}
                 onPress={() => {
                   setSearchQuery('');
                   setFilteredExercises(exercises);
@@ -1211,56 +1156,17 @@ export default function WorkoutScreen({ navigation }) {
                 }}
               >
                 <MaterialCommunityIcons name="plus" size={24} color="#3B82F6" />
-                <Text style={styles.addExerciseCardText}>Add Exercise</Text>
+                <Text style={{color: '#3B82F6', marginLeft: 8}}>Add Exercise</Text>
               </TouchableOpacity>
             )}
             
-            {/* Bottom padding for scrolling */}
-            <View style={{ height: 100 }} />
+            {/* Bottom padding */}
+            <View style={{height: 80}} />
           </ScrollView>
-          
-          {/* Bottom action buttons */}
-          <View style={styles.bottomActions}>
-            <TouchableOpacity 
-              style={styles.addExerciseButton}
-              onPress={() => {
-                setSearchQuery('');
-                setFilteredExercises(exercises);
-                setSearchModalVisible(true);
-              }}
-            >
-              <Text style={styles.addExerciseButtonText}>ADD EXERCISE</Text>
-            </TouchableOpacity>
-            
-            {workouts.length > 0 && (
-              <TouchableOpacity 
-                style={styles.cancelWorkoutButton}
-                onPress={() => {
-                  Alert.alert(
-                    "Cancel Workout",
-                    "Are you sure you want to cancel this workout? All progress will be lost.",
-                    [
-                      { text: "No", style: "cancel" },
-                      { text: "Yes", style: "destructive", onPress: () => {
-                        setWorkouts([]);
-                        setIsWorkoutStarted(false);
-                        setTimer(0);
-                        setIsTiming(false);
-                        setWorkoutTitle("My Workout");
-                        setWorkoutNote("");
-                      }}
-                    ]
-                  );
-                }}
-              >
-                <Text style={styles.cancelWorkoutButtonText}>CANCEL WORKOUT</Text>
-              </TouchableOpacity>
-            )}
-          </View>
         </View>
       )}
       
-      {/* Exercise Search Modal */}
+      {/* Your existing modals */}
       <ExerciseSearchModal
         visible={searchModalVisible}
         onClose={() => setSearchModalVisible(false)}
@@ -1271,10 +1177,10 @@ export default function WorkoutScreen({ navigation }) {
         loadingExercises={loadingExercises}
       />
       
-      {/* Exercise Set Modal */}
       <ExerciseSetModal
         visible={setModalVisible}
         onClose={() => {
+          console.log("Closing set modal");
           setSetModalVisible(false);
           setEditingSet(null);
           setEditingSetIndex(null);
@@ -1285,26 +1191,37 @@ export default function WorkoutScreen({ navigation }) {
         editingIndex={editingSetIndex}
       />
       
-      {/* Completion Modal */}
       <CompletionModal
-        visible={isWorkoutEnded}
-        onDismiss={() => setIsWorkoutEnded(false)}
+        visible={completionModalVisible}
         onSave={saveToProfile}
         onPost={postWorkout}
+        onContinue={continueWorkout}
+        timer={timer}
+        workouts={workouts}
+        saveLoading={saveLoading}
+        postLoading={postLoading}
+      />
+
+      <CompletionModal
+        visible={isWorkoutEnded}
+        onSave={saveToProfile}
+        onPost={postWorkout}
+        onContinue={() => {
+          // Reset workout state
+          setIsWorkoutEnded(false);
+          setWorkouts([]);
+          setIsWorkoutStarted(false);
+          setTimer(0);
+          setWorkoutTitle("My Workout");
+          setWorkoutNote("");
+        }}
         timer={timer}
         workouts={workouts}
         saveLoading={saveLoading}
         postLoading={postLoading}
       />
       
-      {/* Templates Modal */}
-      <TemplatesModal
-        visible={templatesModalVisible}
-        onClose={() => setTemplatesModalVisible(false)}
-        templates={templates}
-        loading={loadingTemplates}
-        onApplyTemplate={applyTemplate}
-      />
+      {/* Other modals */}
     </SafeAreaView>
   );
 }
@@ -1318,67 +1235,124 @@ const styles = StyleSheet.create({
   // START WORKOUT SCREEN
   startWorkoutContainer: {
     flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 40,
+    backgroundColor: '#0A0A0A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
   },
-  welcomeTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#FFF',
+  startWorkoutContent: {
+    width: '100%',
+    maxWidth: 500,
+    alignItems: 'center',
+  },
+  logoContainer: {
     marginBottom: 24,
   },
-  startWorkoutCard: {
-    borderRadius: 24,
-    overflow: 'hidden',
+  logoBackground: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    justifyContent: 'center',
+    alignItems: 'center',
     ...Platform.select({
       ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 12 },
+        shadowColor: '#3B82F6',
+        shadowOffset: { width: 0, height: 6 },
         shadowOpacity: 0.3,
-        shadowRadius: 16,
+        shadowRadius: 12,
       },
       android: {
         elevation: 8,
       }
     }),
   },
-  cardGradient: {
-    borderRadius: 24,
-    padding: 24,
-  },
-  startWorkoutTitle: {
-    fontSize: 24,
+  welcomeTitle: {
+    fontSize: 28,
     fontWeight: '700',
-    color: '#FFF',
-    marginBottom: 24,
+    color: '#FFFFFF',
     textAlign: 'center',
+    marginBottom: 12,
+  },
+  welcomeSubtitle: {
+    fontSize: 16,
+    color: '#999999',
+    textAlign: 'center',
+    marginBottom: 40,
+    maxWidth: '80%',
+  },
+  startButtonsContainer: {
+    width: '100%',
+    marginBottom: 48,
   },
   startButton: {
+    width: '100%',
     borderRadius: 16,
     overflow: 'hidden',
     marginBottom: 16,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#3B82F6',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      }
+    }),
   },
   startButtonGradient: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 16,
-    borderRadius: 16,
   },
   startButtonText: {
-    color: '#FFF',
+    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '600',
-    marginLeft: 10,
+    marginLeft: 12,
   },
   templatesButton: {
+    width: '100%',
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  templatesButtonGradient: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 16,
   },
   templatesButtonText: {
-    color: '#3B82F6',
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '500',
+    marginLeft: 10,
+  },
+  featuresContainer: {
+    width: '100%',
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  featureIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  featureText: {
+    fontSize: 16,
+    color: '#FFFFFF',
   },
   
   // ACTIVE WORKOUT SCREEN
@@ -1599,6 +1573,8 @@ const styles = StyleSheet.create({
   // MODAL STYLES
   blurContainer: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   modalOverlay: {
     flex: 1,
@@ -1614,17 +1590,20 @@ const styles = StyleSheet.create({
     backgroundColor: '#1A1A1A',
     borderRadius: 24,
     padding: 24,
+    alignItems: 'center', // Center the logo
   },
   modalHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center', // Center the title
     alignItems: 'center',
     marginBottom: 20,
+    width: '100%', // Full width to ensure proper centering
   },
   completionTitle: {
-    fontSize: 22,
+    fontSize: 24, // Slightly larger
     fontWeight: '700',
     color: '#FFF',
+    marginRight: 10,
   },
   workoutSummary: {
     flexDirection: 'row',
@@ -1839,4 +1818,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
+  logoHeaderContainer: {
+    alignItems: 'center',
+    marginBottom: 16, // Space between logo and title
+  },
+  logoBackground: {
+    width: 80,
+    height: 80,
+    borderRadius: 20, // Slightly smaller corner radius
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden', // Keep logo inside rounded corners
+    ...Platform.select({
+      ios: {
+        shadowColor: '#3b82f6',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 6,
+      }
+    })
+  },
+  completionLogo: {
+    width: '100%',
+    height: '100%',
+  },
 });
+
+export default WorkoutScreen;

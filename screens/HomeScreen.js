@@ -32,13 +32,28 @@ import { searchUsers } from '../data/firebaseHelpers';
 import HealthStats from '../components/HealthStats';
 import { triggerHaptic } from '../App';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 const { width, height } = Dimensions.get('window');
 
 // Create an Animated FlatList component
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
+
+// Create a completely different version of BlurComponent that doesn't use BlurView at all
+const SafeBlurComponent = ({ style, children }) => {
+  return (
+    <View style={[
+      style, 
+      { 
+        backgroundColor: 'rgba(10, 10, 10, 0.85)',
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255, 255, 255, 0.1)'
+      }
+    ]}>
+      {children}
+    </View>
+  );
+};
 
 export default function HomeScreen() {
   const navigation = useNavigation();
@@ -55,6 +70,7 @@ export default function HomeScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const searchDebounce = useRef(null); // Add debounce timeout ref
   
   // AI Chat state
   const [chatExpanded, setChatExpanded] = useState(false);
@@ -246,17 +262,55 @@ export default function HomeScreen() {
   };
   
   // Search function
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+  const handleSearchInputChange = (text) => {
+    setSearchQuery(text);
+    
+    // Clear any previous debounce timeout
+    if (searchDebounce.current) {
+      clearTimeout(searchDebounce.current);
+    }
+    
+    if (!text.trim()) {
+      setSearchResults([]);
+      return;
+    }
+    
+    // Set a short debounce to avoid too many requests while typing
+    searchDebounce.current = setTimeout(() => {
+      performSearch(text);
+    }, 300);
+  };
+
+  const performSearch = async (query) => {
+    if (!query.trim() || query.trim().length < 2) return;
+    
     try {
       setSearching(true);
-      const results = await searchUsers(searchQuery.trim());
-      setSearchResults(results);
+      console.log("Searching for:", query.trim());
+      
+      const results = await searchUsers(query.trim());
+      console.log("Search returned results:", results ? results.length : 0);
+      
+      const validResults = results.filter(user => 
+        user && user.id && (user.username || user.displayName)
+      );
+      
+      setSearchResults(validResults);
+      console.log("Valid search results:", validResults.length);
     } catch (error) {
       console.error('Error searching users:', error);
+      // Only show alert for user-initiated searches (not typing)
+      if (query === searchQuery) {
+        Alert.alert('Search Error', 'Unable to find users. Please try again.');
+      }
     } finally {
       setSearching(false);
     }
+  };
+
+  const handleSearch = () => {
+    if (!searchQuery.trim()) return;
+    performSearch(searchQuery);
   };
   
   // Message bubble component
@@ -606,7 +660,7 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.container} edges={['top', 'right', 'left']}>
       <StatusBar style="light" />
       
-      {/* Fixed Header with Animated Blur Effect */}
+      {/* Fixed Header with Backdrop Effect (without BlurView) */}
       <Animated.View 
         style={[
           styles.fixedHeader,
@@ -616,9 +670,9 @@ export default function HomeScreen() {
           }
         ]}
       >
-        <BlurView intensity={80} tint="dark" style={styles.blurHeader}>
+        <SafeBlurComponent style={styles.blurHeader}>
           <Text style={styles.headerTitle}>{formatDateForDisplay(selectedDate)}</Text>
-        </BlurView>
+        </SafeBlurComponent>
       </Animated.View>
       
       {/* Main Content - Using Animated FlatList to fix the native driver issue */}
@@ -643,7 +697,7 @@ export default function HomeScreen() {
         transparent={true}
         onRequestClose={() => setShowSearchModal(false)}
       >
-        <BlurView intensity={30} tint="dark" style={styles.modalOverlay}>
+        <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0, 0, 0, 0.7)' }]}>
           <View style={styles.modalContainer}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -666,7 +720,7 @@ export default function HomeScreen() {
                   <TextInput
                     style={styles.searchInput}
                     value={searchQuery}
-                    onChangeText={setSearchQuery}
+                    onChangeText={handleSearchInputChange}
                     placeholder="Search by username..."
                     placeholderTextColor="#888"
                     autoCapitalize="none"
@@ -705,11 +759,16 @@ export default function HomeScreen() {
               </View>
               
               {/* Search Results */}
-              {searchResults.length > 0 ? (
+              {searching ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#3B82F6" />
+                </View>
+              ) : searchResults.length > 0 ? (
                 <FlatList
                   data={searchResults}
                   keyExtractor={item => item.id}
                   style={styles.searchResultsList}
+                  contentContainerStyle={{ paddingBottom: 20 }}
                   renderItem={({ item }) => (
                     <TouchableOpacity
                       style={styles.userResultItem}
@@ -724,8 +783,14 @@ export default function HomeScreen() {
                         defaultSource={defaultAvatar}
                       />
                       <View style={styles.userResultInfo}>
-                        <Text style={styles.userResultName}>{item.displayName || item.username}</Text>
-                        <Text style={styles.userResultUsername}>@{item.username}</Text>
+                        <Text style={styles.userResultName} numberOfLines={1}>
+                          {item.displayName || item.username || 'User'}
+                        </Text>
+                        {item.username && (
+                          <Text style={styles.userResultUsername} numberOfLines={1}>
+                            @{item.username}
+                          </Text>
+                        )}
                       </View>
                       <MaterialCommunityIcons name="chevron-right" size={20} color="#888" />
                     </TouchableOpacity>
@@ -735,14 +800,12 @@ export default function HomeScreen() {
                     <Text style={styles.noResultsText}>No users found</Text>
                   }
                 />
-              ) : searching ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="large" color="#3B82F6" />
-                </View>
+              ) : searchQuery.trim().length > 0 ? (
+                <Text style={styles.noResultsText}>No users found</Text>
               ) : null}
             </View>
           </View>
-        </BlurView>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -1147,21 +1210,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalContainer: {
-    width: '90%',
-    maxWidth: 400,
-    maxHeight: '80%',
-    backgroundColor: 'rgba(26, 26, 26, 0.9)',
-    borderRadius: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 10,
+    flex: 1,
+    width: '100%',
+    backgroundColor: '#121212',
+    borderRadius: 20,
     overflow: 'hidden',
+    maxHeight: height * 0.8,
   },
   modalContent: {
-    padding: 24,
     flex: 1,
+    padding: 20,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1221,11 +1279,14 @@ const styles = StyleSheet.create({
   },
   searchResultsList: {
     flex: 1,
+    marginTop: 10,
   },
   userResultItem: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 12,
   },
   userResultAvatar: {
     width: 50,
@@ -1236,6 +1297,7 @@ const styles = StyleSheet.create({
   userResultInfo: {
     flex: 1,
     marginLeft: 14,
+    marginRight: 8,
   },
   userResultName: {
     fontSize: 16,
