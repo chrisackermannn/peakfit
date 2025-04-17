@@ -438,7 +438,7 @@ const ProfileScreen = ({ navigation }) => {
               <View style={{ flex: 1 }} />
               <TouchableOpacity 
                 style={styles.settingsButton}
-                onPress={navigateToSettings}
+                onPress={navigateToEditProfile}
               >
                 <MaterialCommunityIcons name="cog" size={22} color="#FFF" />
               </TouchableOpacity>
@@ -472,12 +472,7 @@ const ProfileScreen = ({ navigation }) => {
                 </Text>
                 
                 <View style={styles.profileButtons}>
-                  <TouchableOpacity 
-                    style={styles.editProfileButton}
-                    onPress={navigateToEditProfile}
-                  >
-                    <Text style={styles.editProfileText}>Edit Profile</Text>
-                  </TouchableOpacity>
+  
                   
                   {/* Admin button - show only for admins */}
                   {isAdmin && (

@@ -276,6 +276,8 @@ const CompletionModal = ({
   saveLoading,
   postLoading
 }) => {
+  const insets = useSafeAreaInsets();
+  
   // Calculate total volume, sets, and exercises
   const totalVolume = workouts.reduce((acc, workout) => {
     return acc + workout.sets.reduce((setAcc, set) => {
@@ -365,6 +367,83 @@ const CompletionModal = ({
   );
 };
 
+// Exercise Demo Modal component
+const ExerciseDemoModal = ({ visible, onClose, exercise }) => {
+  const insets = useSafeAreaInsets();
+  const [loading, setLoading] = useState(true);
+  
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <SafeBackdrop style={styles.blurContainer}>
+        <View style={[styles.demoModalContent, { 
+          paddingBottom: insets.bottom > 0 ? insets.bottom : 20,
+          marginHorizontal: 20
+        }]}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{exercise?.name || 'Exercise Demo'}</Text>
+            <IconButton
+              icon="close"
+              size={24}
+              color="#FFF"
+              onPress={onClose}
+            />
+          </View>
+          
+          <View style={styles.gifContainer}>
+            {exercise?.gifUrl ? (
+              <>
+                <ActivityIndicator 
+                  style={loading ? styles.loadingOverlay : {display: 'none'}} 
+                  size="large" 
+                  color="#3B82F6" 
+                />
+                <Image 
+                  source={{ uri: exercise.gifUrl }} 
+                  style={styles.exerciseGif}
+                  onLoadStart={() => setLoading(true)}
+                  onLoad={() => setLoading(false)}
+                  resizeMode="contain"
+                />
+              </>
+            ) : (
+              <View style={styles.noGifContainer}>
+                <MaterialCommunityIcons name="image-off" size={60} color="#666" />
+                <Text style={styles.noGifText}>No demonstration available</Text>
+              </View>
+            )}
+          </View>
+          
+          {exercise?.instructions && (
+            <View style={styles.instructionsContainer}>
+              <Text style={styles.instructionsTitle}>Instructions:</Text>
+              <Text style={styles.instructionsText}>{exercise.instructions}</Text>
+            </View>
+          )}
+          
+          {exercise?.equipment && (
+            <View style={styles.metaInfoRow}>
+              <MaterialCommunityIcons name="dumbbell" size={20} color="#3B82F6" />
+              <Text style={styles.metaInfoText}>{exercise.equipment}</Text>
+            </View>
+          )}
+          
+          {exercise?.muscle && (
+            <View style={styles.metaInfoRow}>
+              <MaterialCommunityIcons name="arm-flex" size={20} color="#3B82F6" />
+              <Text style={styles.metaInfoText}>{exercise.muscle}</Text>
+            </View>
+          )}
+        </View>
+      </SafeBackdrop>
+    </Modal>
+  );
+};
+
 // Main WorkoutScreen Component
 export function WorkoutScreen({ navigation }) {
   const { user } = useAuth();
@@ -380,6 +459,8 @@ export function WorkoutScreen({ navigation }) {
   const [setModalVisible, setSetModalVisible] = useState(false);
   const [templatesModalVisible, setTemplatesModalVisible] = useState(false);
   const [completionModalVisible, setCompletionModalVisible] = useState(false);
+  const [demoModalVisible, setDemoModalVisible] = useState(false);
+  const [selectedDemoExercise, setSelectedDemoExercise] = useState(null);
   
   // State for exercise selection
   const [searchQuery, setSearchQuery] = useState('');
@@ -533,36 +614,43 @@ export function WorkoutScreen({ navigation }) {
   // Select exercise from search
   const selectExercise = (exercise) => {
     console.log("Exercise selected:", exercise.name);
-    setSelectedExercise(exercise);
+    setSelectedExercise({
+      name: exercise.name,
+      id: exercise.id, // Save the API id for possible later reference
+      gifUrl: exercise.gifUrl, // Save the gifUrl
+      equipment: exercise.equipment,
+      muscle: exercise.muscle || exercise.target, // The API sometimes uses "target" instead of "muscle"
+      instructions: exercise.instructions
+    });
     
     // Generate unique ID for this exercise
     const newExerciseId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
     setCurrentExerciseId(newExerciseId);
     
-    // Close search modal and open set modal with a small delay to prevent UI flicker
+    // Close search modal and open set modal
     setSearchModalVisible(false);
     
-    // Add a small delay before showing the set modal to ensure search modal is fully closed
     setTimeout(() => {
-      console.log("Opening set modal for", exercise.name);
       setSetModalVisible(true);
     }, 100);
   };
   
   // Add or update set to an exercise
   const handleSaveSet = (setData, editingIndex = null) => {
-    console.log("Saving set", setData, "for exercise ID", currentExerciseId);
-    console.log("Is this a new exercise?", !workouts.some(w => w.id === currentExerciseId));
-    
     // If this is a new exercise
     if (!workouts.some(workout => workout.id === currentExerciseId)) {
-      console.log("Adding new exercise with set");
       setWorkouts(prevWorkouts => [
         ...prevWorkouts,
         {
           id: currentExerciseId,
           name: selectedExercise.name,
-          sets: [setData]
+          sets: [setData],
+          // Save exercise details
+          apiId: selectedExercise.id,
+          gifUrl: selectedExercise.gifUrl,
+          equipment: selectedExercise.equipment,
+          muscle: selectedExercise.muscle,
+          instructions: selectedExercise.instructions
         }
       ]);
       
@@ -689,6 +777,17 @@ export function WorkoutScreen({ navigation }) {
         }
       ]
     );
+  };
+
+  // Show exercise demo
+  const handleShowDemo = (exercise) => {
+    setSelectedDemoExercise({
+      ...exercise,
+      // If exercise was added from search, it already has gifUrl
+      // If not, we need to fetch it - this is a placeholder until we get the actual data
+      gifUrl: exercise.gifUrl || null
+    });
+    setDemoModalVisible(true);
   };
   
   // Save workout to profile
@@ -1072,12 +1171,20 @@ export function WorkoutScreen({ navigation }) {
                     <Text style={styles.exerciseName}>
                       {exercise.name}
                     </Text>
-                    <TouchableOpacity 
-                      style={styles.exerciseAction}
-                      onPress={() => handleDeleteExercise(exercise.id)}
-                    >
-                      <MaterialCommunityIcons name="delete" size={22} color="#666" />
-                    </TouchableOpacity>
+                    <View style={styles.exerciseActions}>
+                      <TouchableOpacity 
+                        style={styles.exerciseAction}
+                        onPress={() => handleShowDemo(exercise)}
+                      >
+                        <MaterialCommunityIcons name="information" size={22} color="#3B82F6" />
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        style={styles.exerciseAction}
+                        onPress={() => handleDeleteExercise(exercise.id)}
+                      >
+                        <MaterialCommunityIcons name="delete" size={22} color="#666" />
+                      </TouchableOpacity>
+                    </View>
                   </View>
                   
                   {/* Sets Table */}
@@ -1219,6 +1326,12 @@ export function WorkoutScreen({ navigation }) {
         workouts={workouts}
         saveLoading={saveLoading}
         postLoading={postLoading}
+      />
+      
+      <ExerciseDemoModal
+        visible={demoModalVisible}
+        onClose={() => setDemoModalVisible(false)}
+        exercise={selectedDemoExercise}
       />
       
       {/* Other modals */}
@@ -1793,6 +1906,65 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     borderColor: '#3B82F6',
+  },
+  
+  // EXERCISE DEMO MODAL
+  demoModalContent: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 24,
+    padding: 24,
+  },
+  gifContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  exerciseGif: {
+    width: '100%',
+    height: 200,
+  },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  noGifContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  noGifText: {
+    color: '#999',
+    fontSize: 16,
+    marginTop: 8,
+  },
+  instructionsContainer: {
+    marginTop: 16,
+  },
+  instructionsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFF',
+    marginBottom: 8,
+  },
+  instructionsText: {
+    fontSize: 14,
+    color: '#999',
+  },
+  metaInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  metaInfoText: {
+    fontSize: 14,
+    color: '#999',
+    marginLeft: 8,
   },
   
   // UTILITY STYLES

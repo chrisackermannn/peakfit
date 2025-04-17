@@ -15,7 +15,9 @@ import {
   Dimensions,
   Animated,
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  TouchableWithoutFeedback,
+  Keyboard
 } from 'react-native';
 import { Button, IconButton, Avatar, Surface } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
@@ -27,32 +29,29 @@ import { useNavigation } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { showMessage } from "react-native-flash-message";
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width, height } = Dimensions.get('window');
 const defaultAvatar = require('../assets/default-avatar.png');
 
+// Safe replacement for BlurView
+const SafeBackdrop = ({ children, style }) => {
+  return (
+    <View style={[
+      StyleSheet.absoluteFill, 
+      { backgroundColor: 'rgba(0, 0, 0, 0.8)' },
+      style
+    ]}>
+      {children}
+    </View>
+  );
+};
+
 // Helper function for timestamp processing
 const processTimestamp = (timestamp) => {
   if (!timestamp) return new Date();
-  
-  try {
-    if (typeof timestamp.toDate === 'function') {
-      return timestamp.toDate();
-    } else if (timestamp instanceof Date) {
-      return timestamp;
-    } else if (typeof timestamp === 'string') {
-      return new Date(timestamp);
-    } else if (timestamp.seconds) {
-      return new Date(timestamp.seconds * 1000);
-    }
-  } catch (err) {
-    console.log('Error converting timestamp:', err);
-  }
-  
-  return new Date();
+  return timestamp instanceof Date ? timestamp : timestamp.toDate();
 };
 
 const CommunityScreen = () => {
@@ -443,11 +442,9 @@ const CommunityScreen = () => {
                       {item.comments?.length || 0}
                     </Text>
                   </TouchableOpacity>
-                  
-                  <TouchableOpacity style={styles.actionButton}>
-                    <MaterialCommunityIcons name="share-outline" size={20} color="#999" />
-                  </TouchableOpacity>
+
                 </View>
+                
                 
                 {/* Comments Section - WITH INPUT BELOW */}
                 {isCommentSelected && (
@@ -636,38 +633,64 @@ const CommunityScreen = () => {
             style={styles.modalDismissArea} 
             activeOpacity={1} 
             onPress={() => setTemplateNameModalVisible(false)}
-          />
-          
-          <View style={styles.modalContainer}>
-            <BlurView intensity={80} tint="dark" style={styles.modalBlur}>
-              <View style={styles.modalContent}>
+          >
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+              <View style={[
+                styles.templateModalContent,
+                { width: 240, padding: 14, alignSelf: 'center', minHeight: 0 }
+              ]}>
                 <Text style={styles.modalTitle}>Save Workout Template</Text>
                 <TextInput
-                  style={styles.modalInput}
-                  placeholder="Enter template name"
-                  placeholderTextColor="#999"
+                  style={styles.templateNameInput}
+                  placeholder="Template Name"
+                  placeholderTextColor="#777"
                   value={templateName}
                   onChangeText={setTemplateName}
+                  autoFocus
                 />
-                <View style={styles.modalButtons}>
+                <View style={{
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  marginTop: 20,
+                  gap: 14
+                }}>
                   <Button
                     mode="text"
                     onPress={() => setTemplateNameModalVisible(false)}
-                    style={styles.modalButton}
+                    style={{ flex: 1 }}
+                    labelStyle={{ color: '#999', fontWeight: '600', fontSize: 16 }}
                   >
                     Cancel
                   </Button>
                   <Button
                     mode="contained"
                     onPress={saveWorkoutTemplate}
-                    style={[styles.modalButton, styles.saveButton]}
+                    style={{
+                      flex: 1.3,
+                      borderRadius: 12,
+                      backgroundColor: '#3B82F6',
+                      minWidth: 0,
+                      paddingHorizontal: 0,
+                      justifyContent: 'center'
+                    }}
+                    contentStyle={{
+                      paddingHorizontal: 0,
+                      minWidth: 0,
+                      justifyContent: 'center'
+                    }}
+                    labelStyle={{
+                      color: '#FFF',
+                      fontWeight: '600',
+                      fontSize: 16,
+                      textAlign: 'center'
+                    }}
                   >
                     Save
                   </Button>
                 </View>
               </View>
-            </BlurView>
-          </View>
+            </TouchableWithoutFeedback>
+          </TouchableOpacity>
         </View>
       </Modal>
     </SafeAreaView>
@@ -1029,11 +1052,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.6)',
   },
   modalDismissArea: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
   },
   modalContainer: {
     flex: 1,
@@ -1072,7 +1094,19 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   saveButton: {
-    backgroundColor: '#3B82F6',
+    borderRadius: 12,
+    overflow: 'hidden',
+    minWidth: 130,
+  },
+  saveButtonGradient: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
   cardWrapper: {
     marginBottom: 20,
@@ -1094,6 +1128,51 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.05)',
+  },
+  templateModalContent: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 24,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  templateModalTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  templateModalSubtitle: {
+    color: '#999',
+    fontSize: 14,
+    marginBottom: 24,
+  },
+  templateNameInput: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginBottom: 24,
+  },
+  templateModalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  cancelButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 
