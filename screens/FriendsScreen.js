@@ -9,7 +9,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  TextInput
+  TextInput,
+  StatusBar,
+  Platform
 } from 'react-native';
 import { Surface, Button, IconButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -18,20 +20,35 @@ import { db } from '../Firebase/firebaseConfig';
 import { doc, getDoc, updateDoc, arrayRemove } from 'firebase/firestore';
 import { getUserFriends, searchUsers } from '../data/firebaseHelpers';
 import { startDirectMessage } from '../data/messagingHelpers';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 
 export default function FriendsScreen({ navigation }) {
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const [friends, setFriends] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
+  
+  // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [error, setError] = useState(null);
-
-  // Load friends list
+  
+  // Load friends on component mount
+  useEffect(() => {
+    loadFriends();
+    
+    // Hide default header
+    navigation.setOptions({
+      headerShown: false
+    });
+  }, []);
+  
+  // Load friends from Firestore
   const loadFriends = async () => {
     if (!user?.uid) return;
     
@@ -39,70 +56,67 @@ export default function FriendsScreen({ navigation }) {
       setLoading(true);
       setError(null);
       
-      const friendsList = await getUserFriends(user.uid);
-      setFriends(friendsList);
+      const userFriends = await getUserFriends(user.uid);
+      setFriends(userFriends);
     } catch (err) {
       console.error('Error loading friends:', err);
-      setError('Failed to load friends list');
+      setError('Failed to load friends');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  useEffect(() => {
-    loadFriends();
-  }, [user?.uid]);
-
-  // Handle refresh
-  const handleRefresh = () => {
-    setRefreshing(true);
-    loadFriends();
-  };
-
-  // Search for users
+  // Handle search submission
   const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
+    }
     
     try {
       setSearching(true);
       setError(null);
-      const results = await searchUsers(searchQuery.trim());
       
-      // Filter out current user and already-friended users from results
-      const filteredResults = results.filter(result => 
-        result.id !== user?.uid && 
-        !friends.some(friend => friend.id === result.id)
-      );
+      const results = await searchUsers(searchQuery);
       
-      setSearchResults(filteredResults);
+      // Filter out the current user from results
+      const filtered = results.filter(result => result.id !== user?.uid);
+      
+      setSearchResults(filtered);
     } catch (err) {
-      console.error('Error searching users:', err);
-      setError('Failed to search users');
+      console.error('Search error:', err);
+      setError('Search failed. Please try again.');
     } finally {
       setSearching(false);
     }
   };
-
-  // Remove a friend
+  
+  // Refresh friends list
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadFriends();
+  };
+  
+  // Remove friend
   const removeFriend = async (friendId) => {
-    if (!user?.uid) return;
+    if (!user?.uid || !friendId) return;
     
     try {
+      // Update friends array in Firestore
       const userRef = doc(db, 'users', user.uid);
       await updateDoc(userRef, {
         friends: arrayRemove(friendId)
       });
       
-      // Update the local state
-      setFriends(prev => prev.filter(friend => friend.id !== friendId));
-    } catch (err) {
-      console.error('Error removing friend:', err);
+      // Update local state
+      setFriends(friends.filter(friend => friend.id !== friendId));
+    } catch (error) {
+      console.error('Error removing friend:', error);
       setError('Failed to remove friend');
     }
   };
 
-  // Start a chat
   const startChat = async (friendId) => {
     try {
       if (!user?.uid) return;
@@ -132,147 +146,216 @@ export default function FriendsScreen({ navigation }) {
 
   // Render a friend item
   const renderFriendItem = ({ item }) => (
-    <Surface style={styles.friendCard}>
-      <TouchableOpacity 
-        style={styles.friendContent}
-        onPress={() => viewProfile(item.id)}
+    <View style={styles.friendCard}>
+      <LinearGradient
+        colors={['rgba(30, 41, 59, 0.7)', 'rgba(15, 23, 42, 0.7)']}
+        style={styles.friendCardGradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
       >
-        <Image
-          source={item.photoURL ? { uri: item.photoURL } : defaultAvatar}
-          style={styles.friendAvatar}
-          defaultSource={defaultAvatar}
-        />
-        
-        <View style={styles.friendDetails}>
-          <Text style={styles.friendName}>{item.displayName || item.username}</Text>
-          <Text style={styles.friendUsername}>@{item.username}</Text>
-        </View>
-      </TouchableOpacity>
-      
-      <View style={styles.friendActions}>
-        <IconButton
-          icon="chat"
-          color="#3B82F6"
-          size={24}
-          onPress={() => startChat(item.id)}
-          style={styles.chatButton}
-        />
-        
-        <Button
-          mode="outlined"
-          onPress={() => removeFriend(item.id)}
-          style={styles.unfriendButton}
-          labelStyle={styles.unfriendButtonLabel}
+        <TouchableOpacity 
+          style={styles.friendContent}
+          onPress={() => viewProfile(item.id)}
+          activeOpacity={0.8}
         >
-          Unfriend
-        </Button>
-      </View>
-    </Surface>
-  );
-
-  // Render a search result item
-  const renderSearchResultItem = ({ item }) => (
-    <Surface style={styles.friendCard}>
-      <TouchableOpacity 
-        style={styles.friendContent}
-        onPress={() => viewProfile(item.id)}
-      >
-        <Image
-          source={item.photoURL ? { uri: item.photoURL } : defaultAvatar}
-          style={styles.friendAvatar}
-        />
+          <Image
+            source={item.photoURL ? { uri: item.photoURL } : defaultAvatar}
+            style={styles.friendAvatar}
+            defaultSource={defaultAvatar}
+          />
+          
+          <View style={styles.friendInfo}>
+            <Text style={styles.friendName}>{item.displayName || item.username}</Text>
+            <Text style={styles.friendUsername}>@{item.username}</Text>
+            {item.bio && (
+              <Text style={styles.friendBio} numberOfLines={1}>{item.bio}</Text>
+            )}
+          </View>
+        </TouchableOpacity>
         
-        <View style={styles.friendDetails}>
-          <Text style={styles.friendName}>{item.displayName || item.username}</Text>
-          <Text style={styles.friendUsername}>@{item.username}</Text>
+        <View style={styles.friendActions}>
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() => startChat(item.id)}
+          >
+            <LinearGradient
+              colors={['#10B981', '#059669']}
+              style={styles.actionButtonGradient}
+            >
+              <MaterialCommunityIcons name="chat-outline" size={16} color="#FFFFFF" />
+            </LinearGradient>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() => removeFriend(item.id)}
+          >
+            <LinearGradient
+              colors={['#EF4444', '#DC2626']}
+              style={styles.actionButtonGradient}
+            >
+              <MaterialCommunityIcons name="account-remove" size={16} color="#FFFFFF" />
+            </LinearGradient>
+          </TouchableOpacity>
         </View>
-      </TouchableOpacity>
-      
-      <Button
-        mode="contained"
-        onPress={() => viewProfile(item.id)}
-        style={styles.viewProfileButton}
-      >
-        View Profile
-      </Button>
-    </Surface>
+      </LinearGradient>
+    </View>
   );
+  
+  // Render a search result item
+  const renderSearchResultItem = ({ item }) => {
+    // Check if this user is already a friend
+    const isFriend = friends.some(friend => friend.id === item.id);
+    
+    return (
+      <View style={styles.searchResultCard}>
+        <LinearGradient
+          colors={['rgba(30, 41, 59, 0.5)', 'rgba(15, 23, 42, 0.5)']}
+          style={styles.searchResultGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <TouchableOpacity 
+            style={styles.resultContent}
+            onPress={() => viewProfile(item.id)}
+            activeOpacity={0.8}
+          >
+            <Image
+              source={item.photoURL ? { uri: item.photoURL } : defaultAvatar}
+              style={styles.resultAvatar}
+              defaultSource={defaultAvatar}
+            />
+            
+            <View style={styles.resultInfo}>
+              <Text style={styles.resultName}>{item.displayName || item.username}</Text>
+              <Text style={styles.resultUsername}>@{item.username}</Text>
+            </View>
+            
+            {isFriend ? (
+              <View style={styles.friendIndicator}>
+                <MaterialCommunityIcons name="account-check" size={16} color="#10B981" />
+                <Text style={styles.friendIndicatorText}>Friend</Text>
+              </View>
+            ) : (
+              <TouchableOpacity 
+                style={styles.addButton}
+                onPress={() => {
+                  viewProfile(item.id);
+                }}
+              >
+                <LinearGradient
+                  colors={['#3B82F6', '#2563EB']}
+                  style={styles.addButtonGradient}
+                >
+                  <Text style={styles.addButtonText}>View Profile</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
+          </TouchableOpacity>
+        </LinearGradient>
+      </View>
+    );
+  };
 
   return (
-    <View style={styles.container}>
+    <LinearGradient
+      colors={['#0A0A0A', '#121212']}
+      style={[styles.container, { paddingTop: insets.top }]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+    >
+      <StatusBar barStyle="light-content" />
+      
+      {/* Header */}
       <View style={styles.header}>
-        <IconButton
-          icon="arrow-left"
-          color="#FFFFFF"
-          size={24}
+        <TouchableOpacity
+          style={styles.backButton}
           onPress={() => navigation.goBack()}
-          style={styles.backIcon}
-        />
-        <Text style={styles.headerTitle}>Friends</Text>
-      </View>
-
-      {/* Search Section */}
-      <View style={styles.searchContainer}>
-        <View style={styles.searchInputContainer}>
-          <MaterialCommunityIcons name="magnify" size={24} color="#999" style={styles.searchIcon} />
-          <TextInput
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search for new friends..."
-            placeholderTextColor="#999"
-            returnKeyType="search"
-            onSubmitEditing={handleSearch}
-          />
-          {searchQuery !== '' && (
-            <TouchableOpacity onPress={clearSearch}>
-              <MaterialCommunityIcons name="close-circle" size={20} color="#999" />
-            </TouchableOpacity>
-          )}
-        </View>
-        <Button
-          mode="contained"
-          onPress={handleSearch}
-          disabled={!searchQuery.trim() || searching}
-          style={[
-            styles.searchButton,
-            (!searchQuery.trim() || searching) && styles.searchButtonDisabled
-          ]}
-          labelStyle={styles.searchButtonLabel}
         >
-          {searching ? 'Searching...' : 'Search'}
-        </Button>
+          <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Friends</Text>
+        <View style={styles.spacer} />
       </View>
-
-      {/* Search Results */}
-      {searchResults.length > 0 && (
+      
+      {/* Search Box */}
+      <View style={styles.searchContainer}>
+        <LinearGradient
+          colors={['rgba(30, 41, 59, 0.6)', 'rgba(15, 23, 42, 0.6)']}
+          style={styles.searchGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <View style={styles.searchInputContainer}>
+            <MaterialCommunityIcons name="magnify" size={20} color="#94A3B8" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search for users..."
+              placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              onSubmitEditing={handleSearch}
+              returnKeyType="search"
+              autoCapitalize="none"
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={clearSearch}>
+                <MaterialCommunityIcons name="close" size={20} color="#94A3B8" />
+              </TouchableOpacity>
+            )}
+          </View>
+          
+          <TouchableOpacity
+            style={[
+              styles.searchButton,
+              !searchQuery.trim() && styles.searchButtonDisabled
+            ]}
+            onPress={handleSearch}
+            disabled={!searchQuery.trim() || searching}
+          >
+            <LinearGradient
+              colors={['#3B82F6', '#2563EB']}
+              style={styles.searchButtonGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            >
+              <Text style={styles.searchButtonText}>
+                {searching ? 'Searching...' : 'Search'}
+              </Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        </LinearGradient>
+      </View>
+      
+      {/* Main Content: Search Results or Friends List */}
+      {searchResults.length > 0 ? (
         <View style={styles.searchResultsContainer}>
-          <Text style={styles.sectionTitle}>Search Results</Text>
+          <View style={styles.resultsTitleContainer}>
+            <Text style={styles.resultsTitle}>Search Results</Text>
+            <TouchableOpacity onPress={clearSearch}>
+              <Text style={styles.clearText}>Clear</Text>
+            </TouchableOpacity>
+          </View>
+          
           <FlatList
             data={searchResults}
             renderItem={renderSearchResultItem}
             keyExtractor={item => item.id}
+            contentContainerStyle={styles.searchResultsList}
             showsVerticalScrollIndicator={false}
-            style={styles.searchResultsList}
             ListEmptyComponent={
-              <Text style={styles.emptyText}>No users found</Text>
+              <View style={styles.emptyContainer}>
+                <MaterialCommunityIcons name="account-search" size={60} color="#374151" />
+                <Text style={styles.emptyText}>No results found</Text>
+              </View>
             }
           />
-          <Button
-            mode="text"
-            onPress={clearSearch}
-            style={styles.clearButton}
-            labelStyle={styles.clearButtonLabel}
-          >
-            Clear Results
-          </Button>
         </View>
-      )}
-
-      {/* Friends List */}
-      {searchResults.length === 0 && (
+      ) : (
         <View style={styles.friendsContainer}>
-          <Text style={styles.sectionTitle}>Your Friends</Text>
+          <Text style={styles.sectionTitle}>
+            {friends.length > 0 ? `Your Friends (${friends.length})` : 'Your Friends'}
+          </Text>
           
           {loading && !refreshing ? (
             <View style={styles.loadingContainer}>
@@ -283,192 +366,299 @@ export default function FriendsScreen({ navigation }) {
               data={friends}
               renderItem={renderFriendItem}
               keyExtractor={item => item.id}
-              showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.friendsList}
+              showsVerticalScrollIndicator={false}
               refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={['#3B82F6']} />
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  tintColor="#3B82F6"
+                  colors={["#3B82F6"]}
+                />
               }
               ListEmptyComponent={
-                <View style={styles.emptyState}>
-                  <MaterialCommunityIcons name="account-group" size={60} color="#666" />
-                  <Text style={styles.emptyStateText}>No friends yet</Text>
-                  <Text style={styles.emptyStateSubText}>
-                    Search for users to add them as friends
-                  </Text>
+                <View style={styles.emptyContainer}>
+                  <MaterialCommunityIcons name="account-group" size={60} color="#374151" />
+                  <Text style={styles.emptyText}>No friends yet</Text>
+                  <Text style={styles.emptySubtext}>Search for users to add them as friends</Text>
                 </View>
               }
             />
           )}
-          
-          {error && (
-            <Text style={styles.errorText}>{error}</Text>
-          )}
         </View>
       )}
-    </View>
+      
+      {/* Error Message */}
+      {error && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      )}
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
   },
   header: {
-    backgroundColor: '#1A1A1A',
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
-    paddingVertical: 20,
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
   },
-  backIcon: {
-    marginRight: 8,
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: 'bold',
+    fontWeight: '700',
     color: '#FFFFFF',
   },
+  spacer: {
+    width: 40,
+  },
   searchContainer: {
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  searchGradient: {
     padding: 16,
-    backgroundColor: '#1A1A1A',
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderRadius: 16,
   },
   searchInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#2A2A2A',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     borderRadius: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     marginBottom: 12,
-  },
-  searchIcon: {
-    marginRight: 12,
   },
   searchInput: {
     flex: 1,
     color: '#FFFFFF',
     fontSize: 16,
-    paddingVertical: 12,
+    marginLeft: 8,
+    paddingVertical: 4,
   },
   searchButton: {
-    backgroundColor: '#3B82F6',
-    borderRadius: 8,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
   searchButtonDisabled: {
-    backgroundColor: '#2A2A2A',
+    opacity: 0.6,
   },
-  searchButtonLabel: {
+  searchButtonGradient: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+  },
+  searchButtonText: {
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
+  
+  // Friends section
   friendsContainer: {
     flex: 1,
-    padding: 16,
-  },
-  searchResultsContainer: {
-    flex: 1,
-    padding: 16,
+    paddingHorizontal: 16,
   },
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   friendsList: {
     paddingBottom: 20,
   },
-  searchResultsList: {
-    marginBottom: 12,
-  },
   friendCard: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 12,
-    padding: 16,
     marginBottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  friendCardGradient: {
+    borderRadius: 16,
+    padding: 12,
   },
   friendContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
   },
   friendAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    borderWidth: 2,
-    borderColor: '#3B82F6',
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#222',
   },
-  friendDetails: {
+  friendInfo: {
     flex: 1,
-    marginLeft: 16,
+    marginLeft: 12,
   },
   friendName: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
-    marginBottom: 4,
   },
   friendUsername: {
     fontSize: 14,
-    color: '#999',
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  friendBio: {
+    fontSize: 14,
+    color: '#CBD5E0',
+    marginTop: 4,
   },
   friendActions: {
     flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  actionButton: {
+    marginLeft: 10,
+    overflow: 'hidden',
+    borderRadius: 20,
+  },
+  actionButtonGradient: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  
+  // Search results section
+  searchResultsContainer: {
+    flex: 1,
+    paddingHorizontal: 16,
+  },
+  resultsTitleContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  resultsTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  clearText: {
+    fontSize: 14,
+    color: '#3B82F6',
+    fontWeight: '600',
+  },
+  searchResultsList: {
+    paddingBottom: 20,
+  },
+  searchResultCard: {
+    marginBottom: 12,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  searchResultGradient: {
+    padding: 14,
+    borderRadius: 14,
+  },
+  resultContent: {
+    flexDirection: 'row',
     alignItems: 'center',
   },
-  chatButton: {
-    margin: 0,
-    marginRight: 8,
+  resultAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#222',
   },
-  unfriendButton: {
-    backgroundColor: 'transparent',
-    borderColor: '#FF3B30',
-    borderRadius: 8,
+  resultInfo: {
+    flex: 1,
+    marginLeft: 12,
   },
-  unfriendButtonLabel: {
-    color: '#FF3B30',
+  resultName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
-  viewProfileButton: {
-    backgroundColor: '#3B82F6',
-    borderRadius: 8,
+  resultUsername: {
+    fontSize: 14,
+    color: '#94A3B8',
   },
+  friendIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  friendIndicatorText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#10B981',
+    marginLeft: 6,
+  },
+  addButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  addButtonGradient: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+  },
+  addButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  
+  // Loading, empty and error states
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: 40,
   },
-  emptyState: {
+  emptyContainer: {
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 60,
   },
-  emptyStateText: {
-    color: '#FFF',
+  emptyText: {
     fontSize: 18,
     fontWeight: '600',
+    color: '#94A3B8',
     marginTop: 16,
   },
-  emptyStateSubText: {
-    color: '#999',
+  emptySubtext: {
     fontSize: 14,
+    color: '#64748B',
     marginTop: 8,
     textAlign: 'center',
+  },
+  errorContainer: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    padding: 12,
+    borderRadius: 8,
+    marginHorizontal: 16,
+    marginBottom: 16,
   },
   errorText: {
-    color: '#FF3B30',
+    color: '#FCA5A5',
+    fontSize: 14,
     textAlign: 'center',
-    marginTop: 16,
-  },
-  clearButton: {
-    marginTop: 8,
-  },
-  clearButtonLabel: {
-    color: '#3B82F6',
-    fontSize: 16,
-  },
+  }
 });

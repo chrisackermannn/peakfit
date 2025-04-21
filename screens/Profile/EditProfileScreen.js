@@ -1,5 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TextInput, TouchableOpacity, Alert, ActivityIndicator, Platform } from 'react-native';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  Image, 
+  TextInput, 
+  TouchableOpacity, 
+  Alert, 
+  ActivityIndicator, 
+  Platform,
+  ScrollView,
+  KeyboardAvoidingView,
+  StatusBar
+} from 'react-native';
 import { Button } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system';
@@ -7,6 +20,9 @@ import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../../Firebase/firebaseConfig';
 import { useAuth } from '../../context/AuthContext';
+import { LinearGradient } from 'expo-linear-gradient';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const defaultAvatar = require('../../assets/default-avatar.png');
 const MAX_IMAGE_SIZE = 3 * 1024 * 1024; // 3MB in bytes
@@ -18,6 +34,14 @@ export default function EditProfileScreen({ navigation }) {
   const [bio, setBio] = useState(user?.bio || '');
   const [imageUri, setImageUri] = useState(user?.photoURL || null);
   const [loading, setLoading] = useState(false);
+  const insets = useSafeAreaInsets();
+  
+  // Add this to hide the header
+  useEffect(() => {
+    navigation.setOptions({
+      headerShown: false, // Hide the default header
+    });
+  }, [navigation]);
   
   // Request permissions on component mount
   useEffect(() => {
@@ -274,138 +298,288 @@ export default function EditProfileScreen({ navigation }) {
   }
   
   return (
-    <View style={styles.container}>
-      <TouchableOpacity style={styles.imageContainer} onPress={pickImage}>
-        <Image 
-          source={imageUri ? { uri: imageUri } : defaultAvatar}
-          style={styles.profileImage}
-          defaultSource={defaultAvatar}
-        />
-        <View style={styles.editBadge}>
-          <Text style={styles.editBadgeText}>Change Photo</Text>
-        </View>
-      </TouchableOpacity>
-      
-      <View style={styles.form}>
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Username</Text>
-          <TextInput
-            style={styles.input}
-            value={username}
-            onChangeText={setUsername}
-            placeholder="Username"
-            autoCapitalize="none"
-            maxLength={20}
-          />
-        </View>
-        
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Display Name</Text>
-          <TextInput
-            style={styles.input}
-            value={displayName}
-            onChangeText={setDisplayName}
-            placeholder="Display Name"
-            maxLength={30}
-          />
-        </View>
-        
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Bio</Text>
-          <TextInput
-            style={[styles.input, styles.bioInput]}
-            value={bio}
-            onChangeText={setBio}
-            placeholder="Tell us about yourself"
-            multiline
-            numberOfLines={4}
-            maxLength={150}
-          />
-        </View>
-        
-        <Button
-          mode="contained"
-          onPress={handleSave}
-          loading={loading}
-          disabled={loading}
-          style={styles.saveButton}
+    <LinearGradient
+      colors={['#0A0A0A', '#1A1A1A']}
+      style={[styles.container, { paddingTop: insets.top }]}
+      start={{x: 0, y: 0}}
+      end={{x: 1, y: 1}}
+    >
+      <StatusBar barStyle="light-content" />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardAvoid}
+      >
+        <ScrollView 
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
         >
-          Save Profile
-        </Button>
-      </View>
-    </View>
+          <View style={styles.header}>
+            <TouchableOpacity 
+              onPress={() => navigation.goBack()}
+              style={styles.backButton}
+            >
+              <MaterialCommunityIcons name="arrow-left" size={24} color="#FFF" />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Edit Profile</Text>
+            <View style={{width: 24}} />
+          </View>
+          
+          <View style={styles.profileSection}>
+            <TouchableOpacity 
+              style={styles.avatarContainer} 
+              onPress={pickImage}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={['#3B82F6', '#2563EB']}
+                style={styles.avatarBorder}
+                start={{x: 0, y: 0}}
+                end={{x: 1, y: 1}}
+              >
+                <Image 
+                  source={imageUri ? { uri: imageUri } : defaultAvatar}
+                  style={styles.profileImage}
+                  defaultSource={defaultAvatar}
+                />
+              </LinearGradient>
+              
+              <View style={styles.editIconWrapper}>
+                <LinearGradient
+                  colors={['#3B82F6', '#2563EB']}
+                  style={styles.editIcon}
+                  start={{x: 0, y: 0}}
+                  end={{x: 1, y: 1}}
+                >
+                  <MaterialCommunityIcons name="camera" size={16} color="#FFF" />
+                </LinearGradient>
+              </View>
+            </TouchableOpacity>
+            
+            <Text style={styles.changePhotoText}>Change Profile Photo</Text>
+          </View>
+          
+          <View style={styles.formContainer}>
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Username</Text>
+              <View style={styles.inputWrapper}>
+                <MaterialCommunityIcons name="account" size={20} color="#3B82F6" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  value={username}
+                  onChangeText={setUsername}
+                  placeholder="Username"
+                  placeholderTextColor="#666"
+                  autoCapitalize="none"
+                  maxLength={20}
+                />
+              </View>
+            </View>
+            
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Display Name</Text>
+              <View style={styles.inputWrapper}>
+                <MaterialCommunityIcons name="badge-account" size={20} color="#3B82F6" style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  value={displayName}
+                  onChangeText={setDisplayName}
+                  placeholder="Display Name"
+                  placeholderTextColor="#666"
+                  maxLength={30}
+                />
+              </View>
+            </View>
+            
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Bio</Text>
+              <View style={[styles.inputWrapper, styles.bioWrapper]}>
+                <MaterialCommunityIcons 
+                  name="text-box-outline" 
+                  size={20} 
+                  color="#3B82F6" 
+                  style={[styles.inputIcon, {alignSelf: 'flex-start', marginTop: 12}]} 
+                />
+                <TextInput
+                  style={[styles.input, styles.bioInput]}
+                  value={bio}
+                  onChangeText={setBio}
+                  placeholder="Tell us about yourself"
+                  placeholderTextColor="#666"
+                  multiline
+                  numberOfLines={4}
+                  maxLength={150}
+                />
+              </View>
+              <Text style={styles.charCount}>{bio ? bio.length : 0}/150</Text>
+            </View>
+            
+            <TouchableOpacity
+              style={styles.saveButtonContainer}
+              onPress={handleSave}
+              disabled={loading}
+              activeOpacity={0.9}
+            >
+              <LinearGradient
+                colors={['#3B82F6', '#2563EB']}
+                style={styles.saveButton}
+                start={{x: 0, y: 0}}
+                end={{x: 1, y: 1}}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#FFF" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="content-save" size={20} color="#FFF" />
+                    <Text style={styles.saveButtonText}>Save Changes</Text>
+                  </>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F0F0F',
-    alignItems: 'center',
-    paddingTop: 30,
   },
-  imageContainer: {
-    position: 'relative',
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    overflow: 'hidden',
-    marginBottom: 30,
-    backgroundColor: '#2A2A2A',
+  keyboardAvoid: {
+    flex: 1,
   },
-  profileImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  editBadge: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    paddingVertical: 6,
-    alignItems: 'center',
-  },
-  editBadgeText: {
-    color: '#FFF',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  form: {
-    width: '90%',
-    maxWidth: 400,
-  },
-  inputContainer: {
-    marginBottom: 20,
-  },
-  label: {
-    color: '#FFF',
-    fontSize: 16,
-    marginBottom: 8,
-    fontWeight: '500',
-  },
-  input: {
-    backgroundColor: '#2A2A2A',
-    borderRadius: 8,
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    color: '#FFF',
-    fontSize: 16,
-  },
-  bioInput: {
-    height: 100,
-    textAlignVertical: 'top',
-  },
-  saveButton: {
-    marginTop: 20,
-    backgroundColor: '#007AFF',
-    paddingVertical: 8,
-    borderRadius: 10,
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 40,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#0A0A0A',
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  backButton: {
+    padding: 8,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  profileSection: {
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  avatarContainer: {
+    position: 'relative',
+    width: 120,
+    height: 120,
+  },
+  avatarBorder: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    padding: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  profileImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 60,
+    backgroundColor: '#222',
+  },
+  editIconWrapper: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+  },
+  editIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#0A0A0A',
+  },
+  changePhotoText: {
+    color: '#3B82F6',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 16,
+  },
+  formContainer: {
+    paddingHorizontal: 20,
+  },
+  inputGroup: {
+    marginBottom: 22,
+  },
+  label: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFF',
+    marginBottom: 8,
+    paddingLeft: 4,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  inputIcon: {
+    marginRight: 10,
+  },
+  input: {
+    flex: 1,
+    color: '#FFF',
+    fontSize: 16,
+    paddingVertical: 14,
+  },
+  bioWrapper: {
+    alignItems: 'flex-start',
+    paddingTop: 6,
+    paddingBottom: 6,
+  },
+  bioInput: {
+    height: 100,
+    textAlignVertical: 'top',
+  },
+  charCount: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'right',
+    marginTop: 4,
+    paddingRight: 8,
+  },
+  saveButtonContainer: {
+    marginTop: 10,
+  },
+  saveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    paddingVertical: 16,
+    marginTop: 20,
+  },
+  saveButtonText: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginLeft: 8,
+  }
 });

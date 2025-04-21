@@ -45,17 +45,24 @@ import ProfileScreen from '../ProfileScreen';
 import WorkoutScreen from '../WorkoutScreen';
 import CommunityScreen from '../Community';
 import { triggerHaptic } from '../../App';
+import Constants from 'expo-constants'; // Import Constants
 
 // Add this line to import your logo
 const peakfitLogo = require('../../assets/peakfit-logo.png');
 
 WebBrowser.maybeCompleteAuthSession();
 
+// Determine if running in Expo Go or standalone app
+const isExpoGo = Constants.appOwnership === 'expo';
+
 // Set up redirect URI for Google auth
 const redirectUri = makeRedirectUri({
   scheme: "peakfit",
   path: "auth"
 });
+
+console.log("Redirect URI configured as:", redirectUri);
+console.log("Running in Expo Go:", isExpoGo);
 
 // Update these values with your actual Google client IDs
 const googleConfig = {
@@ -93,22 +100,26 @@ export default function LoginScreen({ navigation }) {
   
   // Google Auth Request
   const [request, response, promptAsync] = Google.useAuthRequest({
+    // In Expo Go, you MUST provide at least clientId
     clientId: Platform.select({
       ios: googleConfig.iosClientId,
       android: googleConfig.androidClientId,
-      web: googleConfig.webClientId,
-      default: googleConfig.expoClientId
+      default: googleConfig.webClientId
     }),
-    iosClientId: googleConfig.iosClientId,
+    // These are optional and can be used in addition to clientId
+    iosClientId: googleConfig.iosClientId, 
     androidClientId: googleConfig.androidClientId,
+    webClientId: googleConfig.webClientId,
+    expoClientId: googleConfig.expoClientId,
+    
+    // Important config options
     responseType: ResponseType.IdToken,
     redirectUri,
     scopes: ['profile', 'email'],
-    usePKCE: true,
-    ...(Platform.OS === 'ios' ? { 
-      preferEphemeralSession: true,
-      shouldAutoExchangeCode: false
-    } : {})
+    
+    // Important for Expo Go
+    useProxy: true,
+    selectAccount: true,
   });
   
   // Entrance animations
@@ -324,15 +335,14 @@ export default function LoginScreen({ navigation }) {
       
       console.log("Starting Google sign in with redirect URI:", redirectUri);
       
-      // Always use proxy auth when in Expo Go
-      const result = await promptAsync({
-        useProxy: true
-      });
+      // Simplified call with no parameters - useProxy is already configured above
+      const result = await promptAsync();
       
-      console.log("Google auth result:", JSON.stringify(result, null, 2));
+      console.log("Google auth result type:", result.type);
       
       if (result.type === 'success') {
         // Processing will continue in useEffect when response changes
+        console.log("Authentication success, token will be processed in useEffect");
       } else if (result.type === 'cancel') {
         setError('Sign in was canceled');
       }

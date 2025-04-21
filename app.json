@@ -21,6 +21,15 @@
         "googleSignIn": {
           "reservedClientId": "com.googleusercontent.apps.1074755682998-95lcclulfbq36di4do14imf2uvcrkaof"
         }
+      },
+      "infoPlist": {
+        "NSHealthShareUsageDescription": "This app requires access to your health data to track fitness metrics",
+        "NSHealthUpdateUsageDescription": "This app requires permission to write workout data to your Health app"
+      },
+      "entitlements": {
+        "com.apple.developer.applesignin": ["Default"],
+        "com.apple.developer.healthkit": true,
+        "com.apple.developer.healthkit.access": ["health-data"]
       }
     },
     "android": {

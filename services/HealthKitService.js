@@ -33,27 +33,25 @@ const healthKitOptions = {
 const isSimulator = Platform.OS === 'ios' && NativeModules.RNDeviceInfo?.isEmulator;
 
 class HealthKitService {
-  // Check if HealthKit is available (not on simulator)
-  static isAvailable = Platform.OS === 'ios' && !isSimulator && 
-                      !!AppleHealthKit && typeof AppleHealthKit.initHealthKit === 'function';
+  // Check if HealthKit is available
+  static get isAvailable() {
+    return (
+      Platform.OS === 'ios' && 
+      !isSimulator &&
+      typeof AppleHealthKit?.initHealthKit === 'function'
+    );
+  }
+  
   static isInitialized = false;
   
-  // Initialize HealthKit
-  static initialize() {
+  // Initialize with better error handling
+  static async initialize() {
+    if (!this.isAvailable) {
+      console.log('HealthKit is not available on this device/environment');
+      return Promise.reject(new Error('HealthKit is not available'));
+    }
+    
     return new Promise((resolve, reject) => {
-      if (!this.isAvailable) {
-        console.log('HealthKit is not available: ' + 
-          (Platform.OS !== 'ios' ? 'Not iOS' : 
-           isSimulator ? 'Running on Simulator' : 
-           !AppleHealthKit ? 'AppleHealthKit not loaded' : 
-           'initHealthKit function missing'));
-        reject(new Error('HealthKit is not available'));
-        return;
-      }
-      
-      // Log for debugging
-      console.log('Initializing HealthKit with options:', JSON.stringify(healthKitOptions));
-      
       try {
         AppleHealthKit.initHealthKit(healthKitOptions, (error) => {
           if (error) {

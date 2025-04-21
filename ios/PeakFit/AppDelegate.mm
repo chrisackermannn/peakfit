@@ -13,18 +13,6 @@
   // They will be passed down to the ViewController used by React Native.
   self.initialProps = @{};
 
-  // iOS-specific optimizations for smooth animations
-  dispatch_async(dispatch_get_main_queue(), ^{
-    // Force CADisableMinimumFrameDurationOnPhone to YES for smoother animation
-    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"CADisableMinimumFrameDurationOnPhone"];
-    
-    // Prepare the GPU for rendering
-    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"RCTAccessibilityReduceMotionEnabled"];
-    
-    // Sync settings
-    [[NSUserDefaults standardUserDefaults] synchronize];
-  });
-
   return [super application:application didFinishLaunchingWithOptions:launchOptions];
 }
 

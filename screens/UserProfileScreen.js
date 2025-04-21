@@ -10,7 +10,8 @@ import {
   ActivityIndicator,
   FlatList,
   Alert,
-  Platform
+  Platform,
+  StatusBar
 } from 'react-native';
 import { Surface, Button, IconButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -19,15 +20,17 @@ import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firest
 import { db } from '../Firebase/firebaseConfig';
 import { getUserWorkouts } from '../data/firebaseHelpers';
 import { format } from 'date-fns';
-// Import from your messagingHelpers instead of streamChat
 import { startDirectMessage } from '../data/messagingHelpers';
 import { CommonActions } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 
 export default function UserProfileScreen({ route, navigation }) {
   const { userId } = route.params;
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   
   const [userData, setUserData] = useState(null);
   const [workouts, setWorkouts] = useState([]);
@@ -49,7 +52,7 @@ export default function UserProfileScreen({ route, navigation }) {
       })
     );
   };
-
+  
   // Load user data
   useEffect(() => {
     const loadData = async () => {
@@ -143,169 +146,232 @@ export default function UserProfileScreen({ route, navigation }) {
                 (timestamp instanceof Date ? timestamp : new Date(timestamp));
     return format(date, 'MMM d, yyyy');
   };
+
+  // Hide the default header
+  useEffect(() => {
+    navigation.setOptions({
+      headerShown: false
+    });
+  }, [navigation]);
   
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
+      <LinearGradient 
+        colors={['#0A0A0A', '#1A1A1A']} 
+        style={styles.loadingContainer}
+      >
+        <StatusBar barStyle="light-content" />
         <ActivityIndicator size="large" color="#3B82F6" />
-      </View>
+      </LinearGradient>
     );
   }
   
   if (error) {
     return (
-      <View style={styles.errorContainer}>
+      <LinearGradient 
+        colors={['#0A0A0A', '#1A1A1A']} 
+        style={styles.errorContainer}
+      >
+        <StatusBar barStyle="light-content" />
+        <MaterialCommunityIcons name="alert-circle-outline" size={60} color="#E53E3E" />
         <Text style={styles.errorText}>{error}</Text>
-      </View>
+        <TouchableOpacity 
+          style={styles.errorButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Text style={styles.errorButtonText}>Go Back</Text>
+        </TouchableOpacity>
+      </LinearGradient>
     );
   }
   
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <IconButton
-          icon="arrow-left"
-          color="#FFFFFF"
-          size={24}
+      <StatusBar barStyle="light-content" />
+      
+      {/* Top gradient header with profile info */}
+      <LinearGradient
+        colors={['#111827', '#1E293B']}
+        start={{x: 0, y: 0}}
+        end={{x: 1, y: 1}}
+        style={[styles.header, { paddingTop: insets.top }]}
+      >
+        <TouchableOpacity
+          style={styles.backButton}
           onPress={() => navigation.goBack()}
-          style={styles.backIcon}
-        />
-        <Text style={styles.headerTitle}>Profile</Text>
-      </View>
-
-      <ScrollView style={styles.scrollContent} contentContainerStyle={styles.scrollContentContainer}>
-        {/* User Profile Header */}
-        <Surface style={styles.profileHeader}>
-          <View style={styles.profileTop}>
-            <Image 
-              source={userData?.photoURL ? { uri: userData.photoURL } : defaultAvatar} 
-              style={styles.profileImage}
-              defaultSource={defaultAvatar}
-            />
+        >
+          <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
+        </TouchableOpacity>
+        
+        <View style={styles.profileHeaderContent}>
+          <Image 
+            source={userData?.photoURL ? { uri: userData.photoURL } : defaultAvatar} 
+            style={styles.profileImage}
+            defaultSource={defaultAvatar}
+          />
+          
+          <View style={styles.profileInfo}>
+            <Text style={styles.displayName}>{userData?.displayName || userData?.username}</Text>
+            <Text style={styles.username}>@{userData?.username}</Text>
             
-            <View style={styles.userInfo}>
-              <View style={styles.userDetails}>
-                <Text style={styles.displayName}>{userData.displayName || userData.username}</Text>
-                <Text style={styles.username}>@{userData.username}</Text>
-                
-                {/* Friend button - only show if it's not the current user's profile */}
-                {user?.uid !== userId && (
-                  <View style={styles.actionButtons}>
-                    <Button
-                      mode={isFriend ? "outlined" : "contained"}
-                      onPress={toggleFriend}
-                      loading={friendLoading}
-                      disabled={friendLoading}
-                      style={[styles.friendButton, isFriend && styles.unfriendButton]}
-                      labelStyle={isFriend ? styles.unfriendButtonLabel : {}}
-                    >
-                      {isFriend ? "Unfriend" : "Add Friend"}
-                    </Button>
-                    <Button
-                      mode="outlined"
-                      onPress={startChat}
-                      style={styles.chatButton}
-                      icon="chat"
-                    >
-                      Message
-                    </Button>
-                  </View>
-                )}
-              </View>
+            <View style={styles.joinedInfo}>
+              <MaterialCommunityIcons name="calendar" size={14} color="#94A3B8" />
+              <Text style={styles.joinedText}>
+                Joined {userData?.createdAt ? formatDate(userData.createdAt) : 'recently'}
+              </Text>
             </View>
           </View>
-          
-          {/* Bio Section */}
-          {userData.bio ? (
-            <View style={styles.bioContainer}>
-              <Text style={styles.bioText}>{userData.bio}</Text>
+        </View>
+      </LinearGradient>
+      
+      {/* Action buttons */}
+      <View style={styles.actionContainer}>
+        <LinearGradient
+          colors={['rgba(30, 41, 59, 0.7)', 'rgba(15, 23, 42, 0.7)']}
+          style={styles.actionsGradient}
+        >
+          {user?.uid !== userId && (
+            <View style={styles.actionButtons}>
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  isFriend ? styles.unfriendButton : styles.friendButton
+                ]}
+                onPress={toggleFriend}
+                disabled={friendLoading}
+              >
+                <LinearGradient
+                  colors={isFriend ? ['#475569', '#334155'] : ['#3B82F6', '#2563EB']}
+                  style={styles.actionButtonGradient}
+                >
+                  {friendLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <MaterialCommunityIcons 
+                        name={isFriend ? "account-minus" : "account-plus"} 
+                        size={18} 
+                        color="#FFFFFF" 
+                      />
+                      <Text style={styles.actionButtonText}>
+                        {isFriend ? 'Unfriend' : 'Add Friend'}
+                      </Text>
+                    </>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={startChat}
+              >
+                <LinearGradient
+                  colors={['#10B981', '#059669']}
+                  style={styles.actionButtonGradient}
+                >
+                  <MaterialCommunityIcons name="chat" size={18} color="#FFFFFF" />
+                  <Text style={styles.actionButtonText}>Message</Text>
+                </LinearGradient>
+              </TouchableOpacity>
             </View>
-          ) : null}
-        </Surface>
-        
-        {/* Workouts Section */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Recent Workouts</Text>
-          
-          {workouts.length === 0 ? (
-            <Text style={styles.noWorkoutsText}>No workouts to display</Text>
-          ) : (
-            <FlatList
-              data={workouts}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item }) => (
-                <Surface style={styles.workoutCard}>
-                  <View style={styles.workoutHeader}>
-                    <Text style={styles.workoutTitle}>
-                      {item.name || 'Workout'}
-                    </Text>
-                    <Text style={styles.workoutDate}>
-                      {item.date ? formatDate(item.date) : 'No date'}
-                    </Text>
-                  </View>
-                  
-                  <View style={styles.workoutDetails}>
-                    <View style={styles.workoutStat}>
-                      <MaterialCommunityIcons name="weight-lifter" size={18} color="#4299e1" />
-                      <Text style={styles.workoutStatText}>
-                        {item.totalWeight || 0} lbs
-                      </Text>
-                    </View>
-                    
-                    <View style={styles.workoutStat}>
-                      <MaterialCommunityIcons name="dumbbell" size={18} color="#4299e1" />
-                      <Text style={styles.workoutStatText}>
-                        {item.exercises?.length || 0} exercises
-                      </Text>
-                    </View>
-                  </View>
-                </Surface>
-              )}
-              scrollEnabled={false}
-            />
           )}
+        </LinearGradient>
+      </View>
+      
+      {/* User bio */}
+      {userData?.bio && (
+        <View style={styles.bioContainer}>
+          <LinearGradient
+            colors={['rgba(30, 41, 59, 0.4)', 'rgba(15, 23, 42, 0.4)']}
+            style={styles.bioGradient}
+          >
+            <Text style={styles.bioText}>{userData.bio}</Text>
+          </LinearGradient>
+        </View>
+      )}
+      
+      {/* Workouts section */}
+      <View style={styles.workoutsSection}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Recent Workouts</Text>
+          <Text style={styles.workoutCount}>{workouts.length}</Text>
         </View>
         
-        {/* Add some padding at the bottom to account for the tab bar */}
-        <View style={{ height: 40 }} />
-      </ScrollView>
-
-      {/* Tab Bar Navigation - Styled exactly like the Tabs.js navigator */}
-      <View style={[
-        styles.tabBar, 
-        { height: 60 + bottomInset, paddingBottom: bottomInset }
-      ]}>
-        <TouchableOpacity 
-          style={styles.tabItem}
-          onPress={() => navigateToTab('Home')}
-        >
-          <MaterialCommunityIcons name="home-outline" size={24} color="#999" />
-          <Text style={styles.tabLabel}>Home</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.tabItem}
-          onPress={() => navigateToTab('Workout')}
-        >
-          <MaterialCommunityIcons name="dumbbell" size={24} color="#999" />
-          <Text style={styles.tabLabel}>Workout</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.tabItem}
-          onPress={() => navigateToTab('Community')}
-        >
-          <MaterialCommunityIcons name="account-group-outline" size={24} color="#999" />
-          <Text style={styles.tabLabel}>Community</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.tabItem}
-          onPress={() => navigateToTab('Profile')}
-        >
-          <MaterialCommunityIcons name="account-outline" size={24} color="#999" />
-          <Text style={styles.tabLabel}>Profile</Text>
-        </TouchableOpacity>
+        {workouts.length > 0 ? (
+          <FlatList
+            data={workouts}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <View style={styles.workoutCard}>
+                <LinearGradient
+                  colors={['rgba(30, 41, 59, 0.6)', 'rgba(15, 23, 42, 0.6)']}
+                  style={styles.workoutGradient}
+                >
+                  <View style={styles.workoutHeader}>
+                    <View style={styles.workoutDate}>
+                      <LinearGradient
+                        colors={['#3B82F6', '#2563EB']}
+                        style={styles.dateCircle}
+                      >
+                        <Text style={styles.dateDay}>
+                          {item.createdAt ? format(item.createdAt.toDate(), 'd') : '--'}
+                        </Text>
+                        <Text style={styles.dateMonth}>
+                          {item.createdAt ? format(item.createdAt.toDate(), 'MMM') : '---'}
+                        </Text>
+                      </LinearGradient>
+                    </View>
+                    
+                    <View style={styles.workoutInfo}>
+                      <Text style={styles.workoutTitle}>{item.title || "Workout"}</Text>
+                      <Text style={styles.workoutDuration}>
+                        {item.duration ? `${Math.round(item.duration / 60)} min` : 'No duration'}
+                      </Text>
+                    </View>
+                  </View>
+                  
+                  <View style={styles.workoutStats}>
+                    <View style={styles.statItem}>
+                      <MaterialCommunityIcons name="weight" size={16} color="#60A5FA" />
+                      <Text style={styles.statValue}>
+                        {item.totalWeight ? `${Math.round(item.totalWeight)} lbs` : '--'}
+                      </Text>
+                      <Text style={styles.statLabel}>Volume</Text>
+                    </View>
+                    
+                    <View style={styles.statItem}>
+                      <MaterialCommunityIcons name="dumbbell" size={16} color="#34D399" />
+                      <Text style={styles.statValue}>
+                        {item.exercises?.length || 0}
+                      </Text>
+                      <Text style={styles.statLabel}>Exercises</Text>
+                    </View>
+                    
+                    <View style={styles.statItem}>
+                      <MaterialCommunityIcons name="fire" size={16} color="#F87171" />
+                      <Text style={styles.statValue}>
+                        {item.calories ? `${item.calories}` : '--'}
+                      </Text>
+                      <Text style={styles.statLabel}>Calories</Text>
+                    </View>
+                  </View>
+                </LinearGradient>
+              </View>
+            )}
+            contentContainerStyle={styles.workoutsList}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={styles.emptyWorkouts}>
+                <Text style={styles.emptyText}>No workouts yet</Text>
+              </View>
+            }
+          />
+        ) : (
+          <View style={styles.emptyWorkouts}>
+            <MaterialCommunityIcons name="dumbbell" size={60} color="#374151" />
+            <Text style={styles.emptyText}>No workouts yet</Text>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -314,187 +380,253 @@ export default function UserProfileScreen({ route, navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
-  },
-  header: {
-    backgroundColor: '#1A1A1A',
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    paddingVertical: 20,
-  },
-  backIcon: {
-    marginRight: 8,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    flex: 1,
-    textAlign: 'center',
-  },
-  scrollContent: {
-    flex: 1,
-  },
-  scrollContentContainer: {
-    paddingBottom: 20,
+    backgroundColor: '#0A0A0A',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#121212',
   },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#121212',
     padding: 20,
   },
   errorText: {
-    color: '#E53E3E',
-    fontSize: 16,
+    fontSize: 18,
+    color: '#FFF',
     textAlign: 'center',
+    marginTop: 20,
+    marginBottom: 30,
   },
-  profileHeader: {
-    backgroundColor: '#1E1E1E',
-    padding: 20,
-    borderRadius: 10,
-    margin: 16,
-    elevation: 3,
+  errorButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: '#3B82F6',
+    borderRadius: 8,
   },
-  profileTop: {
+  errorButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  
+  // Header styles
+  header: {
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    overflow: 'hidden',
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    marginTop: 10,
+    marginBottom: 16,
+  },
+  profileHeaderContent: {
     flexDirection: 'row',
+    alignItems: 'center',
   },
   profileImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    marginRight: 16,
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    borderWidth: 3,
+    borderColor: '#3B82F6',
   },
-  userInfo: {
+  profileInfo: {
+    marginLeft: 16,
     flex: 1,
-    justifyContent: 'center',
-  },
-  userDetails: {
-    flex: 1,
-    justifyContent: 'center',
   },
   displayName: {
-    fontSize: 22,
-    fontWeight: 'bold',
+    fontSize: 24,
+    fontWeight: '700',
     color: '#FFFFFF',
     marginBottom: 4,
   },
   username: {
     fontSize: 16,
-    color: '#A0AEC0',
-    marginBottom: 12,
+    color: '#94A3B8',
+    marginBottom: 8,
+  },
+  joinedInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  joinedText: {
+    fontSize: 14,
+    color: '#94A3B8',
+    marginLeft: 6,
+  },
+  
+  // Action buttons section
+  actionContainer: {
+    paddingHorizontal: 16,
+    marginTop: -20,
+    zIndex: 10,
+  },
+  actionsGradient: {
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   actionButtons: {
     flexDirection: 'row',
-    marginTop: 8,
+    justifyContent: 'space-between',
+  },
+  actionButton: {
+    flex: 1,
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginHorizontal: 5,
+  },
+  actionButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+  actionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    marginLeft: 8,
   },
   friendButton: {
-    marginRight: 8,
-    borderRadius: 8,
+    backgroundColor: '#3B82F6',
   },
   unfriendButton: {
-    borderColor: '#E53E3E',
+    backgroundColor: '#475569',
   },
-  unfriendButtonLabel: {
-    color: '#E53E3E',
-  },
-  chatButton: {
-    borderRadius: 8,
-  },
+  
+  // Bio section
   bioContainer: {
+    paddingHorizontal: 16,
     marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#2D3748',
+  },
+  bioGradient: {
+    borderRadius: 16,
+    padding: 16,
   },
   bioText: {
     fontSize: 16,
-    color: '#CBD5E0',
-    lineHeight: 22,
+    color: '#E2E8F0',
+    lineHeight: 24,
   },
-  section: {
-    margin: 16,
+  
+  // Workouts section
+  workoutsSection: {
+    flex: 1,
+    marginTop: 20,
+    paddingBottom: 20,
   },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 16,
-  },
-  workoutCard: {
-    backgroundColor: '#1E1E1E',
-    padding: 16,
-    borderRadius: 10,
-    marginBottom: 12,
-  },
-  workoutHeader: {
+  sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  workoutCount: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3B82F6',
+  },
+  workoutsList: {
+    padding: 16,
+  },
+  workoutCard: {
+    marginBottom: 16,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  workoutGradient: {
+    padding: 16,
+    borderRadius: 16,
+  },
+  workoutHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  workoutDate: {
+    marginRight: 16,
+  },
+  dateCircle: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateDay: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  dateMonth: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.8)',
+  },
+  workoutInfo: {
+    flex: 1,
   },
   workoutTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#FFFFFF',
+    marginBottom: 4,
   },
-  workoutDate: {
+  workoutDuration: {
     fontSize: 14,
-    color: '#A0AEC0',
+    color: '#94A3B8',
   },
-  workoutDetails: {
+  workoutStats: {
     flexDirection: 'row',
-    marginTop: 8,
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+    paddingTop: 16,
   },
-  workoutStat: {
-    flexDirection: 'row',
+  statItem: {
     alignItems: 'center',
-    marginRight: 16,
-  },
-  workoutStatText: {
-    color: '#A0AEC0',
-    fontSize: 14,
-    marginLeft: 6,
-  },
-  noWorkoutsText: {
-    color: '#A0AEC0',
-    fontSize: 16,
-    textAlign: 'center',
-    padding: 20,
-  },
-  // Tab Bar - Styled exactly like in Tabs.js
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: '#141414',
-    borderTopWidth: 0,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 10,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 8,
-  },
-  tabItem: {
     flex: 1,
+  },
+  statValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#94A3B8',
+  },
+  emptyWorkouts: {
     alignItems: 'center',
     justifyContent: 'center',
-    height: 60,
+    padding: 40,
   },
-  tabLabel: {
-    fontSize: 12,
-    fontWeight: '500',
-    paddingBottom: 4,
-    color: '#999',
-    marginTop: 4,
-  },
+  emptyText: {
+    fontSize: 16,
+    color: '#94A3B8',
+    marginTop: 16,
+  }
 });
