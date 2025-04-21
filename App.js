@@ -18,6 +18,8 @@ import MessagesScreen from './screens/MessagesScreen';
 import ChatConversationScreen from './screens/ChatConversationScreen';
 import HealthKitService from './services/HealthKitService';
 import * as Haptics from 'expo-haptics';
+import UserAllWorkout from './screens/UserAllWorkout';
+import EachWorkout from './screens/EachWorkout';
 
 // Enable layout animations for smoother transitions on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -191,6 +193,16 @@ function AppNavigator() {
       <Stack.Screen 
         name="ChatConversation" 
         component={ChatConversationScreen} 
+        options={{ headerShown: false }} 
+      />
+      <Stack.Screen 
+        name="UserAllWorkout" 
+        component={UserAllWorkout} 
+        options={{ headerShown: false }} 
+      />
+      <Stack.Screen 
+        name="EachWorkout" 
+        component={EachWorkout} 
         options={{ headerShown: false }} 
       />
     </Stack.Navigator>

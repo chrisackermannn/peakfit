@@ -10,7 +10,8 @@ import {
   Platform, 
   RefreshControl,
   Animated,
-  Dimensions
+  Dimensions,
+  StatusBar
 } from 'react-native';
 import { Button, Surface } from 'react-native-paper';
 import { useAuth } from '../context/AuthContext';
@@ -21,7 +22,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StatusBar } from 'expo-status-bar';
 import { BlurView } from 'expo-blur';
 
 const { width } = Dimensions.get('window');
@@ -59,7 +59,9 @@ const BlurComponent = ({ intensity, style, children }) => {
 
 // Memoized workout item for better performance
 const WorkoutItem = memo(({ workout, onPress }) => {
-  const date = workout.date ? new Date(workout.date.seconds * 1000) : new Date();
+  const date = workout.date ? 
+    (workout.date.toDate ? workout.date.toDate() : new Date(workout.date)) : 
+    new Date();
   
   return (
     <TouchableOpacity 
@@ -94,14 +96,15 @@ const WorkoutItem = memo(({ workout, onPress }) => {
           
           <View style={styles.workoutMetric}>
             <Text style={styles.metricValue}>
-              {workout.exercises?.reduce((total, item) => total + item.sets, 0) || 0}
+              {workout.exercises?.reduce((total, item) => total + (item.sets || 0), 0) || 0}
             </Text>
             <Text style={styles.metricLabel}>Sets</Text>
           </View>
           
           <View style={styles.workoutMetric}>
             <Text style={styles.metricValue}>
-              {workout.exercises?.reduce((total, item) => total + (item.weight * item.sets * item.reps), 0).toLocaleString() || 0}
+              {Math.floor(workout.exercises?.reduce((total, item) => 
+                total + ((item.weight || 0) * (item.sets || 0) * (item.reps || 0)), 0) || 0).toLocaleString()}
             </Text>
             <Text style={styles.metricLabel}>Volume</Text>
           </View>
@@ -219,6 +222,7 @@ const ProfileScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [totalWeight, setTotalWeight] = useState(0);
+  const [topExercise, setTopExercise] = useState(null);
   const [badges, setBadges] = useState([]);
   const [imageKey, setImageKey] = useState(Date.now());
   const [isAdmin, setIsAdmin] = useState(false);
@@ -304,6 +308,37 @@ const ProfileScreen = ({ navigation }) => {
     return unsubscribe;
   }, [navigation, user?.uid]);
 
+  // Find the top exercise based on frequency
+  const findTopExercise = (workoutData) => {
+    const exerciseCount = {};
+    
+    // Count frequency of each exercise
+    workoutData.forEach(workout => {
+      workout.exercises?.forEach(exercise => {
+        const name = exercise.name;
+        if (name) {
+          exerciseCount[name] = (exerciseCount[name] || 0) + 1;
+        }
+      });
+    });
+    
+    // Find the most frequent exercise
+    let maxCount = 0;
+    let topExerciseName = null;
+    
+    Object.entries(exerciseCount).forEach(([name, count]) => {
+      if (count > maxCount) {
+        maxCount = count;
+        topExerciseName = name;
+      }
+    });
+    
+    return { 
+      name: topExerciseName || 'None', 
+      count: maxCount 
+    };
+  };
+
   // Load user data (stats, workouts)
   const loadUserData = async () => {
     setLoading(true);
@@ -329,6 +364,10 @@ const ProfileScreen = ({ navigation }) => {
         });
       });
       setTotalWeight(totalLiftedWeight);
+      
+      // Find top exercise
+      const topExerciseData = findTopExercise(userWorkouts);
+      setTopExercise(topExerciseData);
       
       // Calculate badges
       const badgesList = [];
@@ -391,15 +430,28 @@ const ProfileScreen = ({ navigation }) => {
   }, []);
   
   // Navigation handlers
-  const navigateToWorkoutHistory = () => navigation.navigate('WorkoutHistory');
+  const navigateToWorkoutHistory = () => {
+    navigation.navigate('UserAllWorkout', {
+      userId: user.uid,
+      userName: user.displayName || user.username || 'User'
+    });
+  };
   const navigateToSettings = () => navigation.navigate('Settings');
   const navigateToEditProfile = () => navigation.navigate('EditProfile');
   const navigateToAdmin = () => {
-    console.log('Navigating to Admin Dashboard');
-    navigation.navigate('AdminDashboard'); // Change from 'Admin' to 'AdminDashboard'
+    console.log('Admin button pressed - navigating to AdminDashboard');
+    navigation.navigate('AdminDashboard'); // Changed from AdminScreen to AdminDashboard
   };
   const navigateToFriends = () => navigation.navigate('Friends');
-  const navigateToWorkoutDetail = workout => navigation.navigate('WorkoutDetail', { workout });
+  
+  // Navigation to workout detail with proper parameters
+  const navigateToWorkoutDetail = workout => {
+    navigation.navigate('EachWorkout', { 
+      workout, 
+      userId: user.uid,
+      userName: user.displayName || 'User'
+    });
+  };
   
   if (loading && !refreshing) {
     return (
@@ -447,6 +499,7 @@ const ProfileScreen = ({ navigation }) => {
             <View style={styles.profileSection}>
               <View style={styles.avatarContainer}>
                 <Image 
+                  key={imageKey} // Force refresh when image changes
                   source={user?.photoURL ? { uri: `${user.photoURL}?${imageKey}` } : defaultAvatar}
                   style={styles.profileImage} 
                   defaultSource={defaultAvatar}
@@ -472,29 +525,27 @@ const ProfileScreen = ({ navigation }) => {
                 </Text>
                 
                 <View style={styles.profileButtons}>
-  
-                  
-                  {/* Admin button - show only for admins */}
-                  {isAdmin && (
-                    <TouchableOpacity 
-                      style={styles.adminButton}
-                      onPress={() => {
-                        console.log('Admin button pressed - navigating to Admin screen');
-                        console.log('Current admin status:', isAdmin);
-                        navigateToAdmin();
-                      }}
-                    >
-                      <Text style={styles.adminButtonText}>Admin</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            </View>
-          </View>
-        </LinearGradient>
-      </Animated.View>
-      
-      {/* Sticky title that appears on scroll */}
+                  /* Admin button - show only for admins */
+                            {isAdmin && (
+                            <TouchableOpacity 
+                              style={styles.adminButton}
+                              onPress={() => {
+                              console.log('Admin button pressed - navigating to AdminScreen');
+                              console.log('Current admin status:', isAdmin);
+                              navigateToAdmin();
+                              }}
+                            >
+                              <Text style={styles.adminButtonText}>Admin</Text>
+                            </TouchableOpacity>
+                            )}
+                          </View>
+                          </View>
+                        </View>
+                        </View>
+                      </LinearGradient>
+                      </Animated.View>
+                      
+                      {/* Sticky title that appears on scroll */}
       <Animated.View 
         style={[
           styles.stickyHeader, 
@@ -590,9 +641,9 @@ const ProfileScreen = ({ navigation }) => {
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
             >
-              <MaterialCommunityIcons name="fire" size={24} color="#C4B5FD" />
-              <Text style={styles.statNumber}>{Math.round(totalWeight / 10)}</Text>
-              <Text style={styles.statLabel}>Calories</Text>
+              <MaterialCommunityIcons name="crown" size={24} color="#C4B5FD" />
+              <Text style={styles.statNumber}>{topExercise?.name === 'None' ? '-' : topExercise?.name}</Text>
+              <Text style={styles.statLabel}>Top Exercise</Text>
             </LinearGradient>
           </View>
         </View>
@@ -879,10 +930,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   statNumber: {
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
     marginVertical: 4,
+    textAlign: 'center',
   },
   statLabel: {
     fontSize: 13,
