@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   Text, 
@@ -13,10 +13,12 @@ import {
   Alert,
   ActivityIndicator,
   Animated,
-  ScrollView
+  ScrollView,
+  Easing // Import Easing for animations
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context'; // Use SafeAreaView correctly by importing it
 import { Button, Surface } from 'react-native-paper';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithCredential, OAuthProvider } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithCredential, OAuthProvider, updateProfile } from 'firebase/auth';
 import { 
   doc, 
   getDoc, 
@@ -47,6 +49,10 @@ import CommunityScreen from '../Community';
 import { triggerHaptic } from '../../App';
 import Constants from 'expo-constants'; // Import Constants
 
+// Import environment variables
+import { GOOGLE_WEB_CLIENT_ID, GOOGLE_IOS_CLIENT_ID, 
+         GOOGLE_ANDROID_CLIENT_ID, GOOGLE_EXPO_CLIENT_ID } from '@env';
+
 // Add this line to import your logo
 const peakfitLogo = require('../../assets/peakfit-logo.png');
 
@@ -63,14 +69,6 @@ const redirectUri = makeRedirectUri({
 
 console.log("Redirect URI configured as:", redirectUri);
 console.log("Running in Expo Go:", isExpoGo);
-
-// Update these values with your actual Google client IDs
-const googleConfig = {
-  iosClientId: '1074755682998-95lcclulfbq36di4do14imf2uvcrkaof.apps.googleusercontent.com',
-  androidClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com',
-  webClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com',
-  expoClientId: '1074755682998-h9n6bi7cshd6vth54eogek5htvq6tclb.apps.googleusercontent.com'
-};
 
 const { width, height } = Dimensions.get('window');
 
@@ -96,21 +94,26 @@ export default function LoginScreen({ navigation }) {
   // Username Modal
   const [showUsernameModal, setShowUsernameModal] = useState(false);
   const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [tempUserData, setTempUserData] = useState(null);
+
+  // Input Refs
+  const usernameInputRef = useRef(null);
+  const displayNameInputRef = useRef(null);
+  const passwordInputRef = useRef(null);
+  const confirmPasswordInputRef = useRef(null);
   
   // Google Auth Request
   const [request, response, promptAsync] = Google.useAuthRequest({
-    // In Expo Go, you MUST provide at least clientId
     clientId: Platform.select({
-      ios: googleConfig.iosClientId,
-      android: googleConfig.androidClientId,
-      default: googleConfig.webClientId
+      ios: GOOGLE_IOS_CLIENT_ID,
+      android: GOOGLE_ANDROID_CLIENT_ID,
+      default: GOOGLE_WEB_CLIENT_ID
     }),
-    // These are optional and can be used in addition to clientId
-    iosClientId: googleConfig.iosClientId, 
-    androidClientId: googleConfig.androidClientId,
-    webClientId: googleConfig.webClientId,
-    expoClientId: googleConfig.expoClientId,
+    iosClientId: GOOGLE_IOS_CLIENT_ID, 
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    expoClientId: GOOGLE_EXPO_CLIENT_ID,
     
     // Important config options
     responseType: ResponseType.IdToken,
@@ -124,18 +127,28 @@ export default function LoginScreen({ navigation }) {
   
   // Entrance animations
   useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 1000,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 1000,
-        useNativeDriver: true,
-      }),
-    ]).start();
+    // Make sure initial values are properly set at the beginning
+    fadeAnim.setValue(0);
+    slideAnim.setValue(20);
+    
+    const animationTimeout = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          useNativeDriver: true,
+          easing: Easing.ease,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 600,
+          useNativeDriver: true,
+          easing: Easing.ease,
+        }),
+      ]).start();
+    }, 100);
+    
+    return () => clearTimeout(animationTimeout);
   }, []);
   
   // Check for Apple Auth availability and force enable on iOS
@@ -397,7 +410,7 @@ export default function LoginScreen({ navigation }) {
   };
   
   const handleRegister = async () => {
-    if (!email || !password) {
+    if (!email || !password || !username || !displayName) {
       setError('Please fill in all fields');
       return;
     }
@@ -412,15 +425,53 @@ export default function LoginScreen({ navigation }) {
       return;
     }
     
+    if (username.length < 3) {
+      setError('Username must be at least 3 characters');
+      return;
+    }
+    
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+      setError('Username can only contain letters, numbers and underscore');
+      return;
+    }
+    
     try {
       setLoading(true);
       setError('');
       
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      // Check if username is taken
+      const usernameQuery = await getDocs(
+        query(collection(db, 'users'), where('username', '==', username.toLowerCase()))
+      );
       
-      // Store user info and move to username selection
-      setTempUserData(userCredential.user);
-      setShowUsernameModal(true);
+      if (!usernameQuery.empty) {
+        setError('Username is already taken');
+        setLoading(false);
+        return;
+      }
+      
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const uid = userCredential.user.uid;
+      
+      // Create user document with all fields
+      const userDocRef = doc(db, 'users', uid);
+      await setDoc(userDocRef, {
+        email: email,
+        username: username.toLowerCase(),
+        displayName: displayName,
+        photoURL: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      
+      // Update the auth profile
+      await updateProfile(auth.currentUser, {
+        displayName: displayName
+      });
+      
+      // Navigate directly to Tabs without showing username modal
+      navigation.replace('Tabs');
+      
     } catch (err) {
       console.error('Registration error:', err);
       
@@ -451,11 +502,13 @@ export default function LoginScreen({ navigation }) {
       // Validate username format
       if (username.length < 3) {
         setError('Username must be at least 3 characters');
+        setLoading(false);
         return;
       }
       
       if (!/^[a-zA-Z0-9_]+$/.test(username)) {
         setError('Username can only contain letters, numbers and underscore');
+        setLoading(false);
         return;
       }
       
@@ -466,6 +519,7 @@ export default function LoginScreen({ navigation }) {
       
       if (!usernameQuery.empty) {
         setError('Username is already taken');
+        setLoading(false);
         return;
       }
       
@@ -478,10 +532,17 @@ export default function LoginScreen({ navigation }) {
       await setDoc(userDocRef, {
         email: tempUserData.email,
         username: username.toLowerCase(),
-        displayName: tempUserData.displayName || username,
+        displayName: displayName || username,
         photoURL: tempUserData.photoURL || null,
         createdAt: serverTimestamp(),
       }, { merge: true });
+      
+      // Update auth profile
+      if (auth.currentUser) {
+        await updateProfile(auth.currentUser, {
+          displayName: displayName || username
+        });
+      }
       
       setShowUsernameModal(false);
       navigation.replace('Tabs');
@@ -493,25 +554,312 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
+  const renderUsernameModal = () => (
+    <Modal
+      visible={showUsernameModal}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={() => {}}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.usernameModalContent}>
+          <Text style={styles.modalTitle}>Complete Your Profile</Text>
+          
+          {error ? (
+            <View style={styles.errorContainer}>
+              <MaterialCommunityIcons name="alert-circle" size={20} color="#f43f5e" />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+          
+          <View style={styles.inputContainer}>
+            <MaterialCommunityIcons name="account" size={20} color="#94A3B8" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Username"
+              placeholderTextColor="#94A3B8"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+          
+          <View style={styles.inputContainer}>
+            <MaterialCommunityIcons name="badge-account" size={20} color="#94A3B8" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Display Name (optional)"
+              placeholderTextColor="#94A3B8"
+              value={displayName}
+              onChangeText={setDisplayName}
+            />
+          </View>
+          
+          <TouchableOpacity
+            style={styles.submitButton}
+            onPress={handleSetUsername}
+            disabled={loading}
+          >
+            <LinearGradient
+              colors={['#3b82f6', '#2563eb']}
+              style={styles.buttonGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            >
+              {loading ? (
+                <ActivityIndicator color="#ffffff" size="small" />
+              ) : (
+                <Text style={styles.buttonText}>Continue</Text>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
+  const renderForm = () => (
+    <LinearGradient
+      colors={['rgba(30,41,59,0.9)', 'rgba(15,23,42,0.9)']}
+      style={styles.formGradient}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 0, y: 1 }}
+    >
+      {/* Form Title */}
+      <Text style={styles.formTitle}>
+        {isRegister ? 'Create Account' : 'Welcome Back'}
+      </Text>
+      
+      {/* Error Message */}
+      {error ? (
+        <View style={styles.errorContainer}>
+          <MaterialCommunityIcons name="alert-circle" size={20} color="#f43f5e" />
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
+      
+      {/* Email Input */}
+      <View style={styles.inputContainer}>
+        <MaterialCommunityIcons name="email-outline" size={20} color="#94A3B8" style={styles.inputIcon} />
+        <TextInput
+          style={styles.input}
+          placeholder="Email"
+          placeholderTextColor="#94A3B8"
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+          blurOnSubmit={false}
+          onSubmitEditing={() => isRegister ? usernameInputRef.current?.focus() : passwordInputRef.current?.focus()}
+          returnKeyType="next"
+          selectionColor="#3B82F6"
+          underlineColorAndroid="transparent"
+        />
+      </View>
+      
+      {/* Username Input (Registration only) */}
+      {isRegister && (
+        <View style={styles.inputContainer}>
+          <MaterialCommunityIcons name="account" size={20} color="#94A3B8" style={styles.inputIcon} />
+          <TextInput
+            ref={usernameInputRef}
+            style={styles.input}
+            placeholder="Username"
+            placeholderTextColor="#94A3B8"
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+            autoCorrect={false}
+            blurOnSubmit={false}
+            onSubmitEditing={() => displayNameInputRef.current?.focus()}
+            returnKeyType="next"
+            selectionColor="#3B82F6"
+          />
+        </View>
+      )}
+      
+      {/* Display Name Input (Registration only) */}
+      {isRegister && (
+        <View style={styles.inputContainer}>
+          <MaterialCommunityIcons name="badge-account" size={20} color="#94A3B8" style={styles.inputIcon} />
+          <TextInput
+            ref={displayNameInputRef}
+            style={styles.input}
+            placeholder="Full Name"
+            placeholderTextColor="#94A3B8"
+            value={displayName}
+            onChangeText={setDisplayName}
+            blurOnSubmit={false}
+            onSubmitEditing={() => passwordInputRef.current?.focus()}
+            returnKeyType="next"
+            selectionColor="#3B82F6"
+          />
+        </View>
+      )}
+      
+      {/* Password Input */}
+      <View style={styles.inputContainer}>
+        <MaterialCommunityIcons name="lock-outline" size={20} color="#94A3B8" style={styles.inputIcon} />
+        <TextInput
+          ref={passwordInputRef}
+          style={styles.input}
+          placeholder="Password"
+          placeholderTextColor="#94A3B8"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          autoCapitalize="none"
+          blurOnSubmit={isRegister ? false : true}
+          onSubmitEditing={() => isRegister ? confirmPasswordInputRef.current?.focus() : handleLogin()}
+          returnKeyType={isRegister ? "next" : "done"}
+          selectionColor="#3B82F6"
+        />
+      </View>
+      
+      {/* Confirm Password (Registration only) */}
+      {isRegister && (
+        <View style={styles.inputContainer}>
+          <MaterialCommunityIcons name="lock-check-outline" size={20} color="#94A3B8" style={styles.inputIcon} />
+          <TextInput
+            ref={confirmPasswordInputRef}
+            style={styles.input}
+            placeholder="Confirm Password"
+            placeholderTextColor="#94A3B8"
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            secureTextEntry
+            returnKeyType="done"
+            onSubmitEditing={handleRegister}
+            selectionColor="#3B82F6"
+          />
+        </View>
+      )}
+      
+      {/* Submit Button */}
+      <TouchableOpacity
+        style={styles.submitButton}
+        onPress={isRegister ? handleRegister : handleLogin}
+        disabled={loading}
+      >
+        <LinearGradient
+          colors={['#3b82f6', '#2563eb']}
+          style={styles.buttonGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+        >
+          {loading ? (
+            <ActivityIndicator color="#ffffff" size="small" />
+          ) : (
+            <Text style={styles.buttonText}>
+              {isRegister ? 'Create Account' : 'Sign In'}
+            </Text>
+          )}
+        </LinearGradient>
+      </TouchableOpacity>
+      
+      {/* Password Reset Info - Only shown in login mode */}
+      {!isRegister && (
+        <TouchableOpacity style={styles.forgotPasswordContainer}>
+          <Text style={styles.forgotPasswordText}>
+            Forgot Password? Email PeakFit2025@gmail.com to reset your password
+          </Text>
+        </TouchableOpacity>
+      )}
+      
+      {/* Divider */}
+      <View style={styles.divider}>
+        <View style={styles.dividerLine} />
+        <Text style={styles.dividerText}>Or continue with</Text>
+        <View style={styles.dividerLine} />
+      </View>
+      
+      {/* Social Sign In Buttons */}
+      <View style={styles.socialButtonsContainer}>
+        {/* Google Sign In */}
+        <TouchableOpacity
+          style={[styles.socialButton, loading && styles.disabledButton]}
+          onPress={handleGoogleSignIn}
+          disabled={loading}
+        >
+          <LinearGradient
+            colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.06)']}
+            style={styles.socialButtonGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <MaterialCommunityIcons name="google" size={22} color="#ffffff" />
+          </LinearGradient>
+        </TouchableOpacity>
+        
+        {/* Apple Sign In */}
+        {Platform.OS === 'ios' && (
+          <TouchableOpacity
+            style={styles.socialButton}
+            onPress={() => {
+              if (appleAuthAvailable) {
+                handleAppleSignIn();
+              } else {
+                Alert.alert('Not Available', 'Apple Sign In is not available on this device');
+                console.log("Apple Authentication not available");
+              }
+            }}
+            disabled={loading}
+          >
+            <LinearGradient
+              colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.06)']}
+              style={styles.socialButtonGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            >
+              <MaterialCommunityIcons name="apple" size={22} color="#ffffff" />
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+      </View>
+      
+      {/* Toggle Login/Register */}
+      <TouchableOpacity
+        style={styles.toggleContainer}
+        onPress={() => {
+          setError('');
+          setIsRegister(!isRegister);
+          setUsername('');
+          setDisplayName('');
+          setConfirmPassword('');
+        }}
+      >
+        <Text style={styles.toggleText}>
+          {isRegister ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
+        </Text>
+      </TouchableOpacity>
+    </LinearGradient>
+  );
+
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
       <StatusBar style="light" />
       
       {/* Background Gradient */}
       <LinearGradient
         colors={['#0f172a', '#1e293b', '#0f172a']}
-        style={styles.backgroundGradient}
+        style={StyleSheet.absoluteFillObject}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.keyboardView}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 50 : 0} // Add this line
         >
           <ScrollView 
             contentContainerStyle={[
               styles.scrollContent,
-              { paddingTop: Math.max(insets.top, 48) }
+              { 
+                paddingTop: Math.max(insets.top, 48),
+                paddingBottom: Math.max(insets.bottom + 20, 40) // Add extra bottom padding
+              }
             ]}
             showsVerticalScrollIndicator={false}
           >
@@ -547,154 +895,7 @@ export default function LoginScreen({ navigation }) {
               
               {/* Form Card */}
               <View style={styles.formContainer}>
-                <LinearGradient
-                  colors={['rgba(30,41,59,0.9)', 'rgba(15,23,42,0.9)']}
-                  style={styles.formGradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 0, y: 1 }}
-                >
-                  {/* Form Title */}
-                  <Text style={styles.formTitle}>
-                    {isRegister ? 'Create Account' : 'Welcome Back'}
-                  </Text>
-                  
-                  {/* Error Message */}
-                  {error ? (
-                    <View style={styles.errorContainer}>
-                      <MaterialCommunityIcons name="alert-circle" size={20} color="#f43f5e" />
-                      <Text style={styles.errorText}>{error}</Text>
-                    </View>
-                  ) : null}
-                  
-                  {/* Email Input */}
-                  <View style={styles.inputContainer}>
-                    <MaterialCommunityIcons name="email-outline" size={20} color="#64748b" style={styles.inputIcon} />
-                    <TextInput
-                      style={styles.textInput}
-                      placeholder="Email"
-                      placeholderTextColor="#64748b"
-                      value={email}
-                      onChangeText={setEmail}
-                      autoCapitalize="none"
-                      keyboardType="email-address"
-                    />
-                  </View>
-                  
-                  {/* Password Input */}
-                  <View style={styles.inputContainer}>
-                    <MaterialCommunityIcons name="lock-outline" size={20} color="#64748b" style={styles.inputIcon} />
-                    <TextInput
-                      style={styles.textInput}
-                      placeholder="Password"
-                      placeholderTextColor="#64748b"
-                      value={password}
-                      onChangeText={setPassword}
-                      secureTextEntry
-                    />
-                  </View>
-                  
-                  {/* Confirm Password (Registration only) */}
-                  {isRegister && (
-                    <View style={styles.inputContainer}>
-                      <MaterialCommunityIcons name="lock-check-outline" size={20} color="#64748b" style={styles.inputIcon} />
-                      <TextInput
-                        style={styles.textInput}
-                        placeholder="Confirm Password"
-                        placeholderTextColor="#64748b"
-                        value={confirmPassword}
-                        onChangeText={setConfirmPassword}
-                        secureTextEntry
-                      />
-                    </View>
-                  )}
-                  
-                  {/* Submit Button */}
-                  <TouchableOpacity
-                    style={styles.submitButton}
-                    onPress={isRegister ? handleRegister : handleLogin}
-                    disabled={loading}
-                  >
-                    <LinearGradient
-                      colors={['#3b82f6', '#2563eb']}
-                      style={styles.buttonGradient}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                    >
-                      {loading ? (
-                        <ActivityIndicator color="#ffffff" size="small" />
-                      ) : (
-                        <Text style={styles.buttonText}>
-                          {isRegister ? 'Create Account' : 'Sign In'}
-                        </Text>
-                      )}
-                    </LinearGradient>
-                  </TouchableOpacity>
-                  
-                  {/* Divider */}
-                  <View style={styles.divider}>
-                    <View style={styles.dividerLine} />
-                    <Text style={styles.dividerText}>Or continue with</Text>
-                    <View style={styles.dividerLine} />
-                  </View>
-                  
-                  {/* Social Login Options */}
-                  <View style={styles.socialButtonsContainer}>
-                    {/* Google Sign In */}
-                    <TouchableOpacity
-                      style={[styles.socialButton, loading && styles.disabledButton]}
-                      onPress={handleGoogleSignIn}
-                      disabled={loading}
-                    >
-                      <LinearGradient
-                        colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.06)']}
-                        style={styles.socialButtonGradient}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                      >
-                        <MaterialCommunityIcons name="google" size={22} color="#ffffff" />
-                      </LinearGradient>
-                    </TouchableOpacity>
-                    
-                    {/* Apple Sign In */}
-                    {Platform.OS === 'ios' && (
-                      <TouchableOpacity
-                        style={styles.socialButton}
-                        onPress={() => {
-                          if (appleAuthAvailable) {
-                            handleAppleSignIn();
-                          } else {
-                            Alert.alert('Not Available', 'Apple Sign In is not available on this device');
-                            console.log("Apple Authentication not available");
-                          }
-                        }}
-                        disabled={loading}
-                      >
-                        <LinearGradient
-                          colors={['rgba(255,255,255,0.12)', 'rgba(255,255,255,0.06)']}
-                          style={styles.socialButtonGradient}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 1 }}
-                        >
-                          <MaterialCommunityIcons name="apple" size={22} color="#ffffff" />
-                        </LinearGradient>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                  
-                  {/* Toggle Login/Register */}
-                  <TouchableOpacity
-                    style={styles.toggleContainer}
-                    onPress={() => {
-                      setError('');
-                      setIsRegister(!isRegister);
-                      setConfirmPassword('');
-                    }}
-                  >
-                    <Text style={styles.toggleText}>
-                      {isRegister ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
-                    </Text>
-                  </TouchableOpacity>
-                </LinearGradient>
+                {renderForm()}
               </View>
             </Animated.View>
           </ScrollView>
@@ -702,64 +903,8 @@ export default function LoginScreen({ navigation }) {
       </LinearGradient>
       
       {/* Username Modal */}
-      <Modal
-        visible={showUsernameModal}
-        animationType="fade"
-        transparent={true}
-      >
-        <BlurView intensity={60} tint="dark" style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <LinearGradient
-              colors={['#1e293b', '#0f172a']}
-              style={styles.modalContent}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 0, y: 1 }}
-            >
-              <Text style={styles.modalTitle}>Create Username</Text>
-              <Text style={styles.modalSubtitle}>Choose a unique username for your profile</Text>
-              
-              {error ? (
-                <View style={styles.errorContainer}>
-                  <MaterialCommunityIcons name="alert-circle" size={20} color="#f43f5e" />
-                  <Text style={styles.errorText}>{error}</Text>
-                </View>
-              ) : null}
-              
-              <View style={styles.inputContainer}>
-                <MaterialCommunityIcons name="account" size={20} color="#64748b" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="Username"
-                  placeholderTextColor="#64748b"
-                  value={username}
-                  onChangeText={setUsername}
-                  autoCapitalize="none"
-                />
-              </View>
-              
-              <TouchableOpacity
-                style={styles.submitButton}
-                onPress={handleSetUsername}
-                disabled={loading}
-              >
-                <LinearGradient
-                  colors={['#3b82f6', '#2563eb']}
-                  style={styles.buttonGradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#ffffff" size="small" />
-                  ) : (
-                    <Text style={styles.buttonText}>Continue</Text>
-                  )}
-                </LinearGradient>
-              </TouchableOpacity>
-            </LinearGradient>
-          </View>
-        </BlurView>
-      </Modal>
-    </View>
+      {renderUsernameModal()}
+    </SafeAreaView>
   );
 }
 
@@ -851,10 +996,15 @@ const Tabs = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: '#0f172a', // Match your darkest gradient color
   },
   backgroundGradient: {
     flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   keyboardView: {
     flex: 1,
@@ -864,7 +1014,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingBottom: 40,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 20, // Add more padding for iOS
   },
   contentContainer: {
     width: '100%',
@@ -966,15 +1116,21 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: 14,
+    backgroundColor: '#1E293B',
+    borderRadius: 12,
     marginBottom: 16,
     paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    height: 56,
+  },
+  input: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 16,
+    paddingVertical: 12,
+    marginLeft: 8,
   },
   inputIcon: {
-    marginRight: 12,
+    marginRight: 8,
   },
   textInput: {
     flex: 1,
@@ -1059,27 +1215,17 @@ const styles = StyleSheet.create({
   // Modal Styling
   modalOverlay: {
     flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'center',
-    padding: 24,
+    alignItems: 'center',
+    padding: 20,
   },
-  modalContainer: {
+  usernameModalContent: {
+    backgroundColor: '#1a1a1a',
     borderRadius: 24,
-    overflow: 'hidden',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000000',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.3,
-        shadowRadius: 16,
-      },
-      android: {
-        elevation: 8,
-      }
-    }),
-  },
-  modalContent: {
     padding: 24,
-    borderRadius: 24,
+    width: '100%',
+    maxWidth: 400,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
   },
@@ -1095,5 +1241,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 24,
     textAlign: 'center',
+  },
+  
+  // Forgot Password Styling
+  forgotPasswordContainer: {
+    marginTop: 16,
+    alignItems: 'center',
+  },
+  forgotPasswordText: {
+    color: '#94A3B8',
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 18,
   },
 });

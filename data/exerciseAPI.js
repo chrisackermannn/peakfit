@@ -1,9 +1,10 @@
 import axios from 'axios';
+import { RAPIDAPI_KEY, RAPIDAPI_HOST } from '@env';
 
 const BASE_URL = 'https://exercisedb.p.rapidapi.com';
 const API_HEADERS = {
-  'x-rapidapi-host': 'exercisedb.p.rapidapi.com',
-  'x-rapidapi-key': 'a82184d89emsha842c11b6cf5139p1e194djsn505741a7d898'
+  'x-rapidapi-key': RAPIDAPI_KEY,
+  'x-rapidapi-host': RAPIDAPI_HOST
 };
 
 // Fetch initial list of exercises with limit
@@ -33,7 +34,6 @@ export async function searchExercises(query) {
       { headers: API_HEADERS }
     );
     
-    // The API response already includes gifUrl for each exercise
     return response.data;
   } catch (error) {
     console.error('Error searching exercises:', error);

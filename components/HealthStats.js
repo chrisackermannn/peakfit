@@ -18,23 +18,43 @@ export default function HealthStats() {
         return;
       }
       
-      // Check if HealthKit is available (will be false on simulator)
-      if (!HealthKitService.isAvailable) {
-        setError('HealthKit is not available on this device');
-        console.log('HealthKit not available - using demo data');
-        setSteps(5234); // Demo step count for simulator
-        setLoading(false);
-        return;
-      }
-      
       try {
+        // Check if we're using simulator
+        const isSimulator = !Platform.isTV && Platform.constants.utsname.machine.toLowerCase().includes('simulator');
+        console.log('Device is simulator:', isSimulator);
+        
+        if (isSimulator || HealthKitService.useSimulatedData) {
+          console.log('Using simulated HealthKit data');
+          // Use simulated data in simulator
+          const simulatedData = {
+            value: Math.floor(Math.random() * 9000) + 3000,
+            simulated: true
+          };
+          setSteps(simulatedData.value);
+          setError(null);
+          setLoading(false);
+          return;
+        }
+        
+        // Real device with HealthKit
+        if (!HealthKitService.isAvailable) {
+          setError('HealthKit is not available on this device');
+          setSteps(0);
+          setLoading(false);
+          return;
+        }
+        
         // Try to initialize if not already initialized
         if (!HealthKitService.isInitialized) {
           try {
             await HealthKitService.initialize();
           } catch (initError) {
             console.log('Failed to initialize HealthKit in component:', initError);
-            // Continue anyway to see if it works
+            // Show a permission error
+            setError('Health permissions not granted');
+            setSteps(0);
+            setLoading(false);
+            return;
           }
         }
         

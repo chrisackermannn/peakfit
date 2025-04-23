@@ -1,18 +1,26 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, initializeAuth, getReactNativePersistence, signInWithEmailAndPassword } from 'firebase/auth';
+import { getAuth, initializeAuth, getReactNativePersistence, signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, initializeFirestore } from 'firebase/firestore';
-import { getStorage, connectStorageEmulator } from 'firebase/storage';
+import { getStorage } from 'firebase/storage';
 import { Platform } from 'react-native';
 import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
+import { FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID, 
+         FIREBASE_STORAGE_BUCKET, FIREBASE_MESSAGING_SENDER_ID, 
+         FIREBASE_APP_ID, FIREBASE_STORAGE_URL } from '@env'; // Ensure to load from .env file
 
+// Firebase Configuration Loaded from .env variables
 const firebaseConfig = {
-  apiKey: "AIzaSyAfnByDnS9VNb-xXUes_AUU3J8fN4937is",
-  authDomain: "fir-basics-90f1d.firebaseapp.com",
-  projectId: "fir-basics-90f1d",
-  storageBucket: "fir-basics-90f1d.appspot.com",
-  messagingSenderId: "1074755682998",
-  appId: "1:1074755682998:web:ee6b4864876c7cba311c17"
+  apiKey: FIREBASE_API_KEY, // Make sure these are set in the .env file
+  authDomain: FIREBASE_AUTH_DOMAIN,
+  projectId: FIREBASE_PROJECT_ID,
+  storageBucket: FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: FIREBASE_MESSAGING_SENDER_ID,
+  appId: FIREBASE_APP_ID
 };
+
+// Log for debugging - remove in production
+console.log("Firebase config loaded from env variables");
 
 const app = initializeApp(firebaseConfig);
 
@@ -22,17 +30,7 @@ const db = initializeFirestore(app, {
 });
 
 // Initialize Firebase storage with CORS settings
-const storage = getStorage(app, "gs://fir-basics-90f1d.firebasestorage.app");
-
-// If in development, you might want to use emulators
-if (process.env.NODE_ENV === 'development') {
-  try {
-    // Optional: Connect to emulators if they're running
-    // connectStorageEmulator(storage, 'localhost', 9199);
-  } catch (e) {
-    console.warn('Failed to connect to storage emulator:', e);
-  }
-}
+const storage = getStorage(app, FIREBASE_STORAGE_URL);
 
 // Initialize Auth with persistence
 const auth = Platform.OS === 'web' 
@@ -42,7 +40,7 @@ const auth = Platform.OS === 'web'
     });
 
 // Add error handler
-auth.onAuthStateChanged((user) => {
+onAuthStateChanged(auth, (user) => {
   if (user) {
     console.log('User is signed in:', user.uid);
   } else {
@@ -63,7 +61,8 @@ const handleLogin = async () => {
     setLoading(true);
     setError('');
     await signInWithEmailAndPassword(auth, email, password);
-    // Rest of login logic...
+    // Redirect or proceed with logic after successful login
+    navigation.navigate('Home'); // Example redirect
   } catch (err) {
     if (err.code === 'auth/invalid-credential') {
       setError('Invalid email or password');

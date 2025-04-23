@@ -392,8 +392,10 @@ const CommunityScreen = () => {
                   </View>
                   
                   <View style={styles.metaItem}>
-                    <MaterialCommunityIcons name="fire" size={16} color="#60A5FA" />
-                    <Text style={styles.metaText}>{Math.round((item.totalWeight || 0) / 10)} cal</Text>
+                    <MaterialCommunityIcons name="weight" size={16} color="#60A5FA" />
+                    <Text style={styles.metaText}>
+                      {Math.floor(item.totalWeight || 0).toLocaleString()} lb
+                    </Text>
                   </View>
                 </View>
                 

@@ -1,22 +1,23 @@
-// screens/HomeScreen.js
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Image,
-  TextInput,
   Platform,
   ActivityIndicator,
   Animated,
   ScrollView,
   Dimensions,
-  KeyboardAvoidingView,
   FlatList,
+  TextInput,
   Modal,
   Alert,
-  Pressable,
+  KeyboardAvoidingView,
+  TouchableWithoutFeedback,
+  Keyboard,
+  RefreshControl // Add this import
 } from 'react-native';
 import { Surface, IconButton, Divider } from 'react-native-paper';
 import { useNavigation } from '@react-navigation/native';
@@ -24,22 +25,26 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
-import { collection, query, onSnapshot, addDoc, serverTimestamp, limit, where, getDocs, orderBy } from 'firebase/firestore';
+import { collection, query, onSnapshot, limit, orderBy, doc, getDoc, addDoc, getDocs, updateDoc, serverTimestamp, where } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
-import { format, addDays, isToday, isSameDay } from 'date-fns';
-import * as FileSystem from 'expo-file-system';
-import { searchUsers } from '../data/firebaseHelpers';
+import { format, addDays, isToday, isSameDay, startOfDay, endOfDay } from 'date-fns';
+import { searchUsers, getUserWorkouts } from '../data/firebaseHelpers';
 import HealthStats from '../components/HealthStats';
 import { triggerHaptic } from '../App';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Badge, getCurrentChallenge } from '../components/Badge';
+import { 
+  getUserChallengeProgress, 
+  countUserLegExercises, 
+  getUserBadges,
+  ensureUserHasFounderBadge 
+} from '../services/BadgeTracker';
 
 const defaultAvatar = require('../assets/default-avatar.png');
 const { width, height } = Dimensions.get('window');
 
-// Create an Animated FlatList component
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
 
-// Create a completely different version of BlurComponent that doesn't use BlurView at all
 const SafeBlurComponent = ({ style, children }) => {
   return (
     <View style={[
@@ -55,84 +60,138 @@ const SafeBlurComponent = ({ style, children }) => {
   );
 };
 
+// Web-friendly touchable component
+const WebTouchable = ({ onPress, style, children, testID }) => {
+  if (Platform.OS === 'web') {
+    return (
+      <div 
+        onClick={onPress} 
+        style={{ cursor: 'pointer' }}
+        data-testid={testID}
+      >
+        <View style={style}>
+          {children}
+        </View>
+      </div>
+    );
+  } else {
+    return (
+      <TouchableOpacity 
+        onPress={onPress} 
+        style={style}
+        testID={testID}
+      >
+        {children}
+      </TouchableOpacity>
+    );
+  }
+};
+
 export default function HomeScreen() {
   const navigation = useNavigation();
   const { user } = useAuth();
-  const [selectedDate, setSelectedDate] = useState(new Date());
-  const dates = [-3, -2, -1, 0, 1, 2, 3].map(diff => addDays(new Date(), diff));
-  const [profileImage, setProfileImage] = useState(user?.photoURL || null);
-  const flatListRef = useRef(null);
-  const scrollViewRef = useRef(null);
   const insets = useSafeAreaInsets();
   
-  // Search state
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [dates, setDates] = useState([]);
+  const [profileImage, setProfileImage] = useState(null);
+  const [scrollY, setScrollY] = useState(new Animated.Value(0));
+  
+  // Challenge tracking
+  const [challengeProgress, setChallengeProgress] = useState(0);
+  const [challengeTarget, setChallengeTarget] = useState(32); // Default for April challenge
+  const [userBadges, setUserBadges] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [userWorkouts, setUserWorkouts] = useState([]);
+  
+  // References for date list
+  const dateListRef = useRef();
+  
+  // Header opacity interpolation
+  const headerOpacity = scrollY.interpolate({
+    inputRange: [0, 50],
+    outputRange: [0, 1],
+    extrapolate: 'clamp'
+  });
+
+  // Search user state
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const searchDebounce = useRef(null); // Add debounce timeout ref
-  
-  // AI Chat state
-  const [chatExpanded, setChatExpanded] = useState(false);
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
-  const [waitingForResponse, setWaitingForResponse] = useState(false);
-  
-  // Define chatMaxHeight constant
-  const chatMaxHeight = 350;
-  
-  // Animation values for collapsible chat
-  const chatHeight = useRef(new Animated.Value(0)).current;
-  
+  const searchTimeout = useRef(null);
+
   // Unread messages state
   const [unreadMessages, setUnreadMessages] = useState(0);
-  const [scrollY] = useState(new Animated.Value(0));
-  
-  // Header animation based on scroll
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 60, 90],
-    outputRange: [0, 0.8, 1],
-    extrapolate: 'clamp'
-  });
-  
-  // Handle profile image safely on iOS
-  useEffect(() => {
-    if (user?.photoURL) {
-      if (Platform.OS === 'ios' && user.photoURL.startsWith('blob:')) {
-        // For iOS, if we encounter a blob URL, use default image instead
-        setProfileImage(null);
-      } else {
-        setProfileImage(user.photoURL);
-      }
-    }
-  }, [user?.photoURL]);
-  
-  // Listen for AI responses and chat history
+
+  // Refreshing state
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Load user data and challenge progress
   useEffect(() => {
     if (!user?.uid) return;
     
-    // Create a collection for this user's chat history
-    const userChatRef = collection(db, 'userChats', user.uid, 'messages');
+    setLoading(true);
     
-    // Query to get all messages ordered by timestamp
-    const messagesQuery = query(userChatRef, orderBy('created_at', 'asc'));
+    // Generate dates for the calendar
+    const today = new Date();
+    const dateArray = [];
+    for (let i = -15; i <= 15; i++) {
+      dateArray.push(addDays(today, i));
+    }
+    setDates(dateArray);
     
-    const unsubscribe = onSnapshot(messagesQuery, (snapshot) => {
-      const newMessages = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          created_at: data.created_at ? new Date(data.created_at.seconds * 1000) : new Date()
-        };
-      });
-      
-      setMessages(newMessages);
-    });
+    // Load profile image
+    if (user.photoURL) {
+      setProfileImage({ uri: user.photoURL });
+    }
     
-    return () => unsubscribe();
+    // Load workouts and challenge progress
+    const loadUserData = async () => {
+      try {
+        // Get user's workouts
+        const workouts = await getUserWorkouts(user.uid);
+        setUserWorkouts(workouts);
+        
+        // Ensure user has founder badge (automatically adds it if not present)
+        await ensureUserHasFounderBadge(user.uid);
+        
+        // Count current leg exercises
+        const legCount = await countUserLegExercises(user.uid);
+        setChallengeProgress(legCount);
+        
+        // Get challenge details
+        const challenge = getCurrentChallenge();
+        setChallengeTarget(challenge.target);
+        
+        // Check if user earned a badge and save to Firebase if they did
+        if (legCount >= challenge.target) {
+          const badgeAwarded = await checkAndAwardBadge(user.uid, legCount, challenge.target);
+          
+          // If badge was just awarded (not previously earned), show a notification or animation
+          if (badgeAwarded) {
+            // You could trigger some UI animation or notification here
+            console.log("New badge earned!");
+          }
+        }
+        
+        // Get user badges
+        const badges = await getUserBadges(user.uid);
+        setUserBadges(badges);
+      } catch (error) {
+        console.error("Error loading user data:", error);
+        Alert.alert(
+          "Data Loading Error",
+          "Could not load workout data. Please try again later."
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadUserData();
   }, [user?.uid]);
-  
+
   // Check for unread messages
   useEffect(() => {
     if (!user?.uid) return;
@@ -154,8 +213,10 @@ export default function HomeScreen() {
         console.error("Error checking unread messages:", error);
       }
     };
+    
     // Initial check
     checkUnreadMessages();
+    
     // Set up listener for real-time updates
     const chatsRef = collection(db, 'users', user.uid, 'chats');
     const unsubscribe = onSnapshot(chatsRef, (snapshot) => {
@@ -165,110 +226,64 @@ export default function HomeScreen() {
       });
       setUnreadMessages(total);
     });
+    
     return () => unsubscribe();
   }, [user?.uid]);
-  
-  // Scroll to bottom when messages change or chat expands
+
+  // Center the date selector on today's date
   useEffect(() => {
-    if (scrollViewRef.current && chatExpanded) {
-      // Wait briefly for layout before scrolling
-      setTimeout(() => {
-        scrollViewRef.current.scrollToEnd({ animated: true });
-      }, 100);
+    if (dates.length > 0 && dateListRef.current) {
+      // Find the index of today
+      const todayIndex = dates.findIndex(date => isToday(date));
+      if (todayIndex !== -1) {
+        // Center today's date
+        setTimeout(() => {
+          try {
+            dateListRef.current?.scrollToIndex({
+              index: todayIndex,
+              animated: false,
+              viewPosition: 0.5 // Center the item
+            });
+          } catch (error) {
+            console.log("Error scrolling to today:", error);
+            // Fallback for scroll issues
+            dateListRef.current?.scrollToOffset({
+              offset: todayIndex * 60, // Approximate item width
+              animated: false
+            });
+          }
+        }, 150); // Give more time for the list to initialize
+      }
     }
-  }, [messages, chatExpanded]);
+  }, [dates]);
   
-  // Send message to AI
-  const sendMessage = async () => {
-    if (!input.trim() || !user?.uid || waitingForResponse) return;
-    
-    const userMessage = input.trim();
-    setInput('');
-    setWaitingForResponse(true);
-    
-    // Add user message to chat
-    setMessages(prev => [...prev, {
-      id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      role: 'user',
-      content: userMessage,
-      created_at: new Date()
-    }]);
-    
-    // Add loading message
-    setMessages(prev => [...prev, {
-      id: `loading-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      role: 'assistant',
-      content: '',
-      created_at: new Date(),
-      isLoading: true
-    }]);
-    
-    try {
-      // Send to Firestore for processing
-      await addDoc(collection(db, 'generate'), {
-        userId: user.uid,
-        prompt: userMessage,
-        createdAt: serverTimestamp(),
-      });
-    } catch (e) {
-      console.error("Error sending message:", e);
-      // Show error message
-      setMessages(prev => {
-        const filtered = prev.filter(msg => !msg.isLoading);
-        filtered.push({
-          id: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          role: 'assistant',
-          content: "Sorry, I couldn't process your request. Please try again.",
-          created_at: new Date()
-        });
-        return filtered;
-      });
-      setWaitingForResponse(false);
-    }
+  // Navigation handlers
+  const navigateToMessages = () => {
+    navigation.navigate('Messages');
   };
   
-  // Toggle chat expansion
-  const toggleChat = () => {
-    // Start height from its current position
-    const initialValue = chatExpanded ? chatMaxHeight : 0;
-    const finalValue = chatExpanded ? 0 : chatMaxHeight;
-    
-    // Set the current value immediately
-    chatHeight.setValue(initialValue);
-    
-    // Toggle state before animation
-    setChatExpanded(!chatExpanded);
-    
-    // Add haptic feedback
-    if (Platform.OS === 'ios') {
-      triggerHaptic('light');
-    }
-    
-    // Run the animation
-    Animated.spring(chatHeight, {
-      toValue: finalValue,
-      useNativeDriver: false, // Height changes can't use native driver
-      friction: 8, // Higher friction = less oscillation
-      tension: 40, // Lower tension = slower but smoother
-      delay: 0,
-    }).start();
-    
-    // Scroll to bottom after animation if expanding
-    if (!chatExpanded && scrollViewRef.current) {
-      setTimeout(() => {
-        scrollViewRef.current.scrollToEnd({ animated: true });
-      }, 200);
-    }
+  const navigateToProfile = () => {
+    navigation.navigate('Profile');
   };
   
-  // Search function
+  const navigateToSearchUsers = () => {
+    setShowSearchModal(true);
+    // Reset search state when opening modal
+    setSearchQuery('');
+    setSearchResults([]);
+  };
+  
+  const navigateToWorkout = () => {
+    navigation.navigate('Workout');
+  };
+  
+  const navigateToCommunity = () => {
+    navigation.navigate('Community');
+  };
+  
+  // Search user functions - fixed to properly search
   const handleSearchInputChange = (text) => {
     setSearchQuery(text);
-    
-    // Clear any previous debounce timeout
-    if (searchDebounce.current) {
-      clearTimeout(searchDebounce.current);
-    }
     
     if (!text.trim()) {
       setSearchResults([]);
@@ -276,7 +291,11 @@ export default function HomeScreen() {
     }
     
     // Set a short debounce to avoid too many requests while typing
-    searchDebounce.current = setTimeout(() => {
+    if (searchTimeout.current) {
+      clearTimeout(searchTimeout.current);
+    }
+    
+    searchTimeout.current = setTimeout(() => {
       performSearch(text);
     }, 300);
   };
@@ -286,96 +305,52 @@ export default function HomeScreen() {
     
     try {
       setSearching(true);
-      console.log("Searching for:", query.trim());
+      console.log("Searching for users with query:", query);
       
       const results = await searchUsers(query.trim());
-      console.log("Search returned results:", results ? results.length : 0);
+      console.log(`Found ${results.length} results for "${query}"`);
       
-      const validResults = results.filter(user => 
+      setSearchResults(results.filter(user => 
         user && user.id && (user.username || user.displayName)
-      );
-      
-      setSearchResults(validResults);
-      console.log("Valid search results:", validResults.length);
+      ));
     } catch (error) {
       console.error('Error searching users:', error);
-      // Only show alert for user-initiated searches (not typing)
-      if (query === searchQuery) {
-        Alert.alert('Search Error', 'Unable to find users. Please try again.');
-      }
+      Alert.alert("Search Error", "Failed to search for users. Please try again.");
     } finally {
       setSearching(false);
     }
   };
-
-  const handleSearch = () => {
-    if (!searchQuery.trim()) return;
-    performSearch(searchQuery);
+  
+  // Select a date
+  const handleDateSelect = (date) => {
+    setSelectedDate(date);
+    triggerHaptic('light');
   };
   
-  // Message bubble component
-  const MessageBubble = ({ message }) => {
-    const isUser = message.role === 'user';
-    
-    if (message.isLoading) {
-      return (
-        <View style={[styles.messageBubble, styles.assistantBubble]}>
-          <ActivityIndicator size="small" color="#FF3B30" />
-        </View>
-      );
-    }
-    
-    return (
-      <View style={[
-        styles.messageBubble,
-        isUser ? styles.userBubble : styles.assistantBubble
-      ]}>
-        {!isUser && (
-          <View style={styles.assistantHeader}>
-            <MaterialCommunityIcons name="robot" size={16} color="#FF3B30" />
-            <Text style={styles.assistantName}>Fitness AI</Text>
-          </View>
-        )}
-        <Text style={isUser ? styles.userText : styles.assistantText}>
-          {message.content}
-        </Text>
-      </View>
-    );
-  };
-  
-  // Navigate to Messages screen
-  const navigateToMessages = () => {
-    navigation.navigate('Messages');
-  };
-  
-  // Format date helper function
-  const formatDateForDisplay = (date) => {
-    if (isToday(date)) {
-      return 'Today';
-    }
-    
-    return format(date, 'EEE, MMM d');
-  };
-  
-  // Render date item for calendar
-  const renderDateItem = ({ item, index }) => {
-    const isSelected = isSameDay(selectedDate, item);
-    const isToday = isSameDay(new Date(), item);
+  // Render date item
+  const renderDateItem = ({ item }) => {
+    const isSelected = isSameDay(item, selectedDate);
+    const isToday_ = isToday(item);
     
     return (
       <TouchableOpacity
         style={[
           styles.dateItem,
-          isSelected && styles.selectedDateItem,
+          isSelected && styles.selectedDateItem
         ]}
-        onPress={() => {
-          setSelectedDate(item);
-          triggerHaptic('light');
-        }}
+        onPress={() => handleDateSelect(item)}
       >
+        <Text style={[
+          styles.dayName,
+          isSelected && styles.selectedDayName
+        ]}>
+          {format(item, 'EEE')}
+        </Text>
         <View style={[
-          styles.dateItemInner,
-          isSelected ? styles.selectedDateItemInner : (isToday ? styles.todayDateItemInner : null)
+          styles.dateCircle,
+          isSelected && styles.selectedDateCircle,
+          isToday_ && styles.todayCircle,
+          isSelected && isToday_ && styles.selectedTodayCircle
         ]}>
           <Text style={[
             styles.dateText,
@@ -383,314 +358,274 @@ export default function HomeScreen() {
           ]}>
             {format(item, 'd')}
           </Text>
-          <Text style={[
-            styles.dayText,
-            isSelected && styles.selectedDayText
-          ]}>
-            {format(item, 'EEE')}
-          </Text>
         </View>
       </TouchableOpacity>
     );
   };
-  
-  const renderMainContent = () => {
-    return (
-      <View style={styles.mainContentContainer}>
-        {/* Top Section with Profile & Date */}
-        <View style={styles.topSection}>
-          <TouchableOpacity 
-            style={styles.profileButton}
-            onPress={() => navigation.navigate('Profile')}
-          >
-            <Image
-              source={profileImage ? { uri: profileImage } : defaultAvatar}
-              style={styles.profileImage}
-              defaultSource={defaultAvatar}
-            />
-          </TouchableOpacity>
-          
-          <View style={styles.welcomeSection}>
-            <Text style={styles.greetingText}>Hello,</Text>
-            <Text style={styles.nameText}>{user?.displayName || 'Fitness Pro'}</Text>
-          </View>
-          
-          <View style={styles.iconButtonsRow}>
-            <TouchableOpacity
-              style={styles.iconButtonContainer}
-              onPress={navigateToMessages}
+
+  // Fixed notification badge style to ensure it's not cut off
+  const notificationBadgeStyle = {
+    position: 'absolute',
+    top: -6, // Move up further to ensure it's not cut off
+    right: -6, // Move right further to ensure it's not cut off
+    backgroundColor: '#FF3B30',
+    minWidth: 18,
+    height: 18,
+    borderRadius: 10, // Increased for better appearance
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#000000',
+    paddingHorizontal: 4, // More horizontal padding
+    zIndex: 10, // Ensure it's on top
+  };
+
+  // Render top section with profile and action buttons
+  const renderTopSection = () => (
+    <View style={[styles.topSection, { marginTop: insets.top + 10 }]}>
+      <View style={styles.welcomeSection}>
+        <Text style={styles.greetingText}>Hello,</Text>
+        <Text style={styles.nameText}>{user?.displayName || 'Fitness Pro'}</Text>
+      </View>
+      
+      <View style={styles.topRightButtons}>
+        {/* Messages button with fixed notification badge */}
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={navigateToMessages}
+          testID="messages-button"
+          accessible={true}
+          accessibilityLabel="Messages"
+          accessibilityRole="button"
+        >
+          <View style={styles.iconButtonWrapper}>
+            <LinearGradient
+              colors={['#2A2A2A', '#1A1A1A']}
+              style={styles.iconButtonGradient}
             >
-              <LinearGradient
-                colors={['#2A2A2A', '#1A1A1A']}
-                style={styles.iconButton}
-              >
-                <MaterialCommunityIcons name="chat-outline" size={20} color="#FFFFFF" />
-                {unreadMessages > 0 && (
-                  <View style={styles.notificationBadge}>
-                    <Text style={styles.notificationText}>
-                      {unreadMessages > 9 ? '9+' : unreadMessages}
-                    </Text>
-                  </View>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={styles.iconButtonContainer}
-              onPress={() => setShowSearchModal(true)}
-            >
-              <LinearGradient
-                colors={['#2A2A2A', '#1A1A1A']}
-                style={styles.iconButton}
-              >
-                <MaterialCommunityIcons name="account-search-outline" size={20} color="#FFFFFF" />
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        </View>
-        
-        {/* Date Selector */}
-        <View style={styles.dateContainer}>
-          <Text style={styles.dateTitle}>Select Date</Text>
-          <FlatList
-            ref={flatListRef}
-            data={dates}
-            renderItem={renderDateItem}
-            keyExtractor={(item) => item.toISOString()}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.dateList}
-            initialScrollIndex={3} // Start at today
-            getItemLayout={(data, index) => ({
-              length: 60,
-              offset: 60 * index,
-              index,
-            })}
-          />
-        </View>
-        
-        {/* Quick Actions Card */}
-        <View style={styles.actionsCard}>
-          <LinearGradient
-            colors={['#1A1A1A', '#121212']}
-            style={styles.actionsCardGradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0, y: 1 }}
-          >
-            <Text style={styles.actionsCardTitle}>Quick Actions</Text>
-            
-            <View style={styles.actionsGrid}>
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => {
-                  navigation.navigate('Workout');
-                  if (Platform.OS === 'ios') {
-                    triggerHaptic('medium');
-                  }
-                }}
-              >
-                <LinearGradient
-                  colors={['#3B82F6', '#2563EB']}
-                  style={styles.actionButtonGradient}
-                >
-                  <MaterialCommunityIcons name="dumbbell" size={24} color="#FFFFFF" />
-                </LinearGradient>
-                <Text style={styles.actionText}>Workout</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => {
-                  toggleChat();
-                  if (Platform.OS === 'ios') {
-                    triggerHaptic('light');
-                  }
-                }}
-              >
-                <LinearGradient
-                  colors={['#FF3B30', '#E11D48']}
-                  style={styles.actionButtonGradient}
-                >
-                  <MaterialCommunityIcons name="robot" size={24} color="#FFFFFF" />
-                </LinearGradient>
-                <Text style={styles.actionText}>AI Coach</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => {
-                  navigation.navigate('Community');
-                  if (Platform.OS === 'ios') {
-                    triggerHaptic('light');
-                  }
-                }}
-              >
-                <LinearGradient
-                  colors={['#10B981', '#059669']}
-                  style={styles.actionButtonGradient}
-                >
-                  <MaterialCommunityIcons name="account-group" size={24} color="#FFFFFF" />
-                </LinearGradient>
-                <Text style={styles.actionText}>Community</Text>
-              </TouchableOpacity>
-            </View>
-          </LinearGradient>
-        </View>
-        
-        {/* AI Chat Card - Collapsible */}
-        <View style={styles.chatCardContainer}>
-          <LinearGradient
-            colors={['#1A1A1A', '#121212']}
-            style={styles.aiChatCard}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0, y: 1 }}
-          >
-            <TouchableOpacity 
-              onPress={toggleChat} 
-              style={styles.aiChatHeader}
-              activeOpacity={0.8}
-            >
-              <View style={styles.aiTitleArea}>
-                <LinearGradient
-                  colors={['#FF3B30', '#E11D48']}
-                  style={styles.aiIconBackground}
-                >
-                  <MaterialCommunityIcons name="robot" size={20} color="#FFFFFF" />
-                </LinearGradient>
-                <Text style={styles.aiChatTitle}>AI Fitness Coach</Text>
+              <MaterialCommunityIcons name="chat-outline" size={22} color="#FFFFFF" />
+            </LinearGradient>
+            {unreadMessages > 0 && (
+              <View style={notificationBadgeStyle}>
+                <Text style={styles.notificationText}>
+                  {unreadMessages > 9 ? '9+' : unreadMessages}
+                </Text>
               </View>
-              <MaterialCommunityIcons
-                name={chatExpanded ? "chevron-up" : "chevron-down"}
-                size={24}
-                color="#999"
-              />
-            </TouchableOpacity>
-            
-            <Animated.View style={[styles.chatContainer, { height: chatHeight }]}>
-              <ScrollView
-                ref={scrollViewRef}
-                contentContainerStyle={styles.messagesContainer}
-                showsVerticalScrollIndicator={false}
-                onContentSizeChange={() => {
-                  if (scrollViewRef.current && chatExpanded) {
-                    scrollViewRef.current.scrollToEnd({ animated: false });
-                  }
-                }}
-              >
-                {messages.map(item => (
-                  <MessageBubble key={item.id} message={item} />
-                ))}
-              </ScrollView>
-              
-              <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-              >
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.input}
-                    value={input}
-                    onChangeText={setInput}
-                    placeholder="Ask about fitness, nutrition..."
-                    placeholderTextColor="#888"
-                    multiline
-                    maxLength={500}
-                    editable={!waitingForResponse}
-                  />
-                  <TouchableOpacity
-                    style={[
-                      styles.sendButton,
-                      (!input.trim() || waitingForResponse) && styles.sendButtonDisabled
-                    ]}
-                    onPress={sendMessage}
-                    disabled={!input.trim() || waitingForResponse}
-                  >
-                    <MaterialCommunityIcons
-                      name="send"
-                      size={18}
-                      color={input.trim() && !waitingForResponse ? "#FFFFFF" : "#666"}
-                    />
-                  </TouchableOpacity>
-                </View>
-              </KeyboardAvoidingView>
-            </Animated.View>
-          </LinearGradient>
-        </View>
+            )}
+          </View>
+        </TouchableOpacity>
         
-        {/* Health Stats Section */}
-        <View style={styles.statsCardContainer}>
-          <Text style={styles.sectionTitle}>Health Stats</Text>
-          {Platform.OS === 'ios' ? (
-            <HealthStats />
-          ) : (
-            <View style={styles.cardContainer}>
+        {/* Search users button */}
+        <TouchableOpacity
+          style={styles.iconButton}
+          onPress={navigateToSearchUsers}
+          testID="search-users-button"
+          accessible={true}
+          accessibilityLabel="Find users"
+          accessibilityRole="button"
+        >
+          <LinearGradient
+            colors={['#2A2A2A', '#1A1A1A']}
+            style={styles.iconButtonGradient}
+          >
+            <MaterialCommunityIcons name="account-search-outline" size={22} color="#FFFFFF" />
+          </LinearGradient>
+        </TouchableOpacity>
+        
+        {/* Profile button */}
+        <TouchableOpacity 
+          style={styles.profileButton}
+          onPress={navigateToProfile}
+          testID="profile-button"
+          accessible={true}
+          accessibilityLabel="Your profile"
+          accessibilityRole="button"
+        >
+          <Image 
+            source={profileImage || defaultAvatar} 
+            style={styles.profileImage}
+            defaultSource={defaultAvatar}
+          />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+  
+  // Render top navigation buttons
+  const renderTopNavButtons = () => (
+    <View style={styles.navButtonsContainer}>
+      <TouchableOpacity 
+        style={styles.navButton}
+        onPress={navigateToWorkout}
+        testID="workout-nav-button"
+      >
+        <LinearGradient
+          colors={['#3B82F6', '#2563EB']}
+          style={styles.navButtonGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <MaterialCommunityIcons name="dumbbell" size={22} color="#FFFFFF" />
+          <Text style={styles.navButtonText}>Start Workout</Text>
+        </LinearGradient>
+      </TouchableOpacity>
+      
+      <TouchableOpacity 
+        style={styles.navButton}
+        onPress={navigateToCommunity}
+        testID="community-nav-button"
+      >
+        <LinearGradient
+          colors={['#8B5CF6', '#7C3AED']}
+          style={styles.navButtonGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <MaterialCommunityIcons name="account-group" size={22} color="#FFFFFF" />
+          <Text style={styles.navButtonText}>Community</Text>
+        </LinearGradient>
+      </TouchableOpacity>
+      
+      <TouchableOpacity 
+        style={styles.navButton}
+        onPress={navigateToProfile}
+        testID="profile-nav-button"
+      >
+        <LinearGradient
+          colors={['#EC4899', '#BE185D']}
+          style={styles.navButtonGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <MaterialCommunityIcons name="account" size={22} color="#FFFFFF" />
+          <Text style={styles.navButtonText}>Profile</Text>
+        </LinearGradient>
+      </TouchableOpacity>
+    </View>
+  );
+  
+  // Improved Monthly Challenge component
+  const renderMonthlyChallenge = () => {
+    const milestones = [
+      { threshold: 8, label: '8' },
+      { threshold: 16, label: '16' },
+      { threshold: 24, label: '24' },
+      { threshold: 32, label: '32' }
+    ];
+    
+    const currentChallenge = getCurrentChallenge();
+    const earnedBadge = userBadges.find(badge => badge.id === currentChallenge.id);
+    const month = format(new Date(), 'MMMM');
+    const progress = Math.min(challengeProgress, challengeTarget);
+    const progressPercentage = (progress / challengeTarget) * 100;
+    
+    return (
+      <View style={styles.challengeCard}>
+        <LinearGradient
+          colors={['#1A1A1A', '#121212']}
+          style={styles.challengeGradient}
+        >
+          {/* Challenge Header */}
+          <View style={styles.challengeHeader}>
+            <View style={styles.challengeBadgeContainer}>
+              {currentChallenge.image && (
+                <Image 
+                  source={currentChallenge.image}
+                  style={styles.challengeBadgeImage}
+                  resizeMode="contain"
+                />
+              )}
+            </View>
+            <View style={styles.challengeInfo}>
+              <Text style={styles.challengeMonthly}>{month}'s Monthly Challenge</Text>
+              <Text style={styles.challengeTitle}>{currentChallenge.name}</Text>
+              <Text style={styles.challengeSubtitle}>{currentChallenge.description}</Text>
+            </View>
+          </View>
+          
+          {/* Progress Display */}
+          <View style={styles.progressSection}>
+            <View style={styles.progressStatsRow}>
+              <View style={styles.progressStat}>
+                <Text style={styles.progressStatValue}>{progress}</Text>
+                <Text style={styles.progressStatLabel}>Completed</Text>
+              </View>
+              <View style={styles.progressDivider} />
+              <View style={styles.progressStat}>
+                <Text style={styles.progressStatValue}>{challengeTarget}</Text>
+                <Text style={styles.progressStatLabel}>Target</Text>
+              </View>
+            </View>
+          </View>
+          
+          {/* Progress Bar */}
+          <View style={styles.progressBarContainer}>
+            <View style={styles.progressBarBackground}>
+              <View 
+                style={[
+                  styles.progressBarFill, 
+                  { width: `${progressPercentage}%` }
+                ]}
+              />
+            </View>
+            
+            {/* Milestone Markers */}
+            {milestones.map((milestone, index) => {
+              const position = (milestone.threshold / challengeTarget) * 100;
+              const isCompleted = progress >= milestone.threshold;
+              
+              return (
+                <View 
+                  key={index} 
+                  style={[
+                    styles.milestoneMarker,
+                    { left: `${position}%` }
+                  ]}
+                >
+                  <View 
+                    style={[
+                      styles.milestoneCircle,
+                      isCompleted && styles.completedMilestoneCircle
+                    ]}
+                  >
+                    {isCompleted ? (
+                      <MaterialCommunityIcons name="check" size={12} color="#FFFFFF" />
+                    ) : null}
+                  </View>
+                  <Text style={styles.milestoneLabel}>
+                    {milestone.threshold}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+          
+          {/* Completion Badge Display */}
+          {earnedBadge && (
+            <View style={styles.badgeEarnedContainer}>
               <LinearGradient
-                colors={['#1A1A1A', '#121212']}
-                style={styles.statsCard}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 0, y: 1 }}
+                colors={['rgba(16, 185, 129, 0.2)', 'rgba(5, 150, 105, 0.1)']} 
+                style={styles.badgeEarnedGradient}
               >
-                <View style={styles.statsHeader}>
-                  <View style={styles.statsIconContainer}>
-                    <MaterialCommunityIcons name="shoe-print" size={22} color="#3B82F6" />
-                  </View>
-                  <View style={styles.statsInfo}>
-                    <Text style={styles.statsTitle}>Steps Tracker</Text>
-                    <Text style={styles.statsSubtitle}>iOS Only</Text>
-                  </View>
-                </View>
-                <View style={styles.statsContent}>
-                  <View style={styles.statsMetric}>
-                    <Text style={styles.statsCount}>0</Text>
-                    <Text style={styles.statsLabel}>Feature only available on iOS</Text>
-                  </View>
-                </View>
+                <MaterialCommunityIcons name="trophy" size={20} color="#10B981" />
+                <Text style={styles.badgeEarnedText}>Challenge Completed!</Text>
               </LinearGradient>
             </View>
           )}
-          
-          {/* Add some padding at the bottom */}
-          <View style={{ height: 40 }} />
-        </View>
+        </LinearGradient>
       </View>
     );
   };
-  
-  return (
-    <SafeAreaView style={styles.container} edges={['top', 'right', 'left']}>
-      <StatusBar style="light" />
-      
-      {/* Fixed Header with Backdrop Effect (without BlurView) */}
-      <Animated.View 
-        style={[
-          styles.fixedHeader,
-          { 
-            opacity: headerOpacity,
-            paddingTop: insets.top > 0 ? 0 : 8
-          }
-        ]}
-      >
-        <SafeBlurComponent style={styles.blurHeader}>
-          <Text style={styles.headerTitle}>{formatDateForDisplay(selectedDate)}</Text>
-        </SafeBlurComponent>
-      </Animated.View>
-      
-      {/* Main Content - Using Animated FlatList to fix the native driver issue */}
-      <AnimatedFlatList
-        data={[1]} // Single item array
-        keyExtractor={() => 'main-content'}
-        renderItem={renderMainContent}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: true }
-        )}
-        scrollEventThrottle={16}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-        bounces={true}
-      />
-      
-      {/* Search User Modal */}
+
+  // Search modal component - formatted exactly like the provided code
+  const renderUserSearchModal = () => {
+    // Define handleSearch function locally in this component
+    const handleSearch = () => {
+      if (!searchQuery.trim()) return;
+      performSearch(searchQuery);
+    };
+
+    return (
       <Modal
         visible={showSearchModal}
         animationType="fade"
@@ -807,366 +742,587 @@ export default function HomeScreen() {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    );
+  };
+
+  // Refresh handler
+  const onRefresh = useCallback(async () => {
+    if (!user?.uid) return;
+    
+    setRefreshing(true);
+    console.log("Refreshing home data...");
+    
+    try {
+      // Get user's workouts
+      const workouts = await getUserWorkouts(user.uid);
+      setUserWorkouts(workouts);
+      
+      // Ensure user has founder badge
+      await ensureUserHasFounderBadge(user.uid);
+      
+      // Count current leg exercises
+      const legCount = await countUserLegExercises(user.uid);
+      setChallengeProgress(legCount);
+      
+      // Get challenge details
+      const challenge = getCurrentChallenge();
+      setChallengeTarget(challenge.target);
+      
+      // Check for badge earning
+      if (legCount >= challenge.target) {
+        await checkAndAwardBadge(user.uid, legCount, challenge.target);
+      }
+      
+      // Get user badges
+      const badges = await getUserBadges(user.uid);
+      setUserBadges(badges);
+      
+      // Check if user profile photo has changed by fetching latest user data
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userDocRef);
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        // Only update profile image if it's different from current one
+        const currentPhotoURL = profileImage?.uri;
+        const newPhotoURL = userData.photoURL;
+        
+        if (newPhotoURL && newPhotoURL !== currentPhotoURL) {
+          console.log("Profile picture updated");
+          setProfileImage({ uri: newPhotoURL });
+        }
+      }
+      
+      console.log("Home data refreshed successfully");
+    } catch (error) {
+      console.error("Error refreshing data:", error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [user?.uid, profileImage?.uri]);
+
+  return (
+    <View style={styles.container}>
+      <StatusBar style="light" />
+      
+      {/* Floating header */}
+      <Animated.View 
+        style={[
+          styles.floatingHeader, 
+          { 
+            opacity: headerOpacity,
+            paddingTop: insets.top
+          }
+        ]}
+      >
+        <SafeBlurComponent style={{ width: '100%', height: '100%' }}>
+          <View style={styles.headerContent}>
+            <Text style={styles.headerTitle}>Home</Text>
+          </View>
+        </SafeBlurComponent>
+      </Animated.View>
+      
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: false }
+        )}
+        scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#3B82F6"
+            colors={["#3B82F6"]}
+            progressBackgroundColor="#1A1A1A"
+          />
+        }
+      >
+        {/* Top section */}
+        {renderTopSection()}
+        
+        {/* Date Selector */}
+        <View style={styles.dateSelector}>
+          <FlatList
+            ref={dateListRef}
+            data={dates}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            renderItem={renderDateItem}
+            keyExtractor={(item) => item.toISOString()}
+            contentContainerStyle={styles.dateList}
+            initialNumToRender={10}
+            maxToRenderPerBatch={15}
+            windowSize={5}
+            getItemLayout={(data, index) => ({
+              length: 60, // Approximate width of each date item
+              offset: 60 * index,
+              index,
+            })}
+            onScrollToIndexFailed={(info) => {
+              console.log('Failed to scroll to index:', info);
+              // Fallback to offset-based scrolling
+              setTimeout(() => {
+                if (dateListRef.current) {
+                  dateListRef.current.scrollToOffset({
+                    offset: info.averageItemLength * info.index,
+                    animated: false
+                  });
+                }
+              }, 100);
+            }}
+          />
+        </View>
+        
+        {/* Top Navigation Buttons */}
+        {renderTopNavButtons()}
+        
+        {/* Monthly Challenge */}
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#3B82F6" />
+          </View>
+        ) : (
+          renderMonthlyChallenge()
+        )}
+        
+        {/* Health stats */}
+        <View style={styles.statsCardContainer}>
+          <Text style={styles.sectionTitle}>Health Stats</Text>
+          {Platform.OS === 'ios' ? (
+            <HealthStats />
+          ) : (
+            <View style={styles.cardContainer}>
+              <LinearGradient
+                colors={['#1A1A1A', '#121212']}
+                style={styles.statsCard}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 0, y: 1 }}
+              >
+                <View style={styles.statsHeader}>
+                  <View style={styles.statsIconContainer}>
+                    <MaterialCommunityIcons name="shoe-print" size={22} color="#3B82F6" />
+                  </View>
+                  <View style={styles.statsInfo}>
+                    <Text style={styles.statsTitle}>Steps Tracker</Text>
+                    <Text style={styles.statsSubtitle}>iOS Only</Text>
+                  </View>
+                </View>
+              </LinearGradient>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+      
+      {/* User search modal */}
+      {renderUserSearchModal()}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#000000',
   },
-  mainContentContainer: {
+  scrollView: {
     flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 20,
   },
   scrollContent: {
     paddingBottom: 40,
   },
-  
-  // Fixed Header with Blur
-  fixedHeader: {
+  floatingHeader: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: 60,
-    zIndex: 100,
+    zIndex: 10,
   },
-  blurHeader: {
-    flex: 1,
+  headerContent: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+    height: 56,
   },
   headerTitle: {
-    fontSize: 17,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: 'bold',
     color: '#FFFFFF',
   },
   
-  // Top Section with Profile & Icons
+  // Top section with welcome, profile and action icons
   topSection: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 30,
-  },
-  profileButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  profileImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 25,
-    borderWidth: 2,
-    borderColor: '#3B82F6',
+    paddingHorizontal: 16,
+    marginBottom: 16,
   },
   welcomeSection: {
     flex: 1,
-    paddingHorizontal: 16,
   },
   greetingText: {
-    fontSize: 14,
-    color: '#999',
+    fontSize: 16,
+    color: '#A0AEC0',
   },
   nameText: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 24,
+    fontWeight: 'bold',
     color: '#FFFFFF',
+    marginTop: 4,
   },
-  iconButtonsRow: {
+  topRightButtons: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
     alignItems: 'center',
   },
-  iconButtonContainer: {
-    marginLeft: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
-    elevation: 3,
-  },
   iconButton: {
+    marginRight: 12,
+  },
+  // New wrapper for icon button - to handle notification badge properly
+  iconButtonWrapper: {
+    position: 'relative',
+    width: 40,
+    height: 40,
+  },
+  iconButtonGradient: {
     width: 40,
     height: 40,
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    overflow: 'hidden',
   },
   notificationBadge: {
+    // Using inline style notificationBadgeStyle instead
     position: 'absolute',
-    top: 0,
-    right: 0,
+    top: -6,
+    right: -6,
     backgroundColor: '#FF3B30',
-    width: 18,
+    minWidth: 18,
     height: 18,
-    borderRadius: 9,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#0A0A0A',
+    borderWidth: 1.5,
+    borderColor: '#000000',
+    paddingHorizontal: 4,
+    zIndex: 10,
   },
   notificationText: {
     color: '#FFFFFF',
     fontSize: 10,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  profileButton: {
+    ...Platform.select({
+      ios: {
+        shadowColor: '#3B82F6',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 4,
+      },
+      web: {
+        cursor: 'pointer',
+      }
+    }),
+  },
+  profileImage: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    borderWidth: 2,
+    borderColor: '#3B82F6',
   },
   
-  // Date Selector
-  dateContainer: {
-    marginBottom: 24,
-  },
-  dateTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  // Date selector styles
+  dateSelector: {
     marginBottom: 16,
   },
   dateList: {
+    paddingHorizontal: 8,
     paddingVertical: 8,
   },
   dateItem: {
-    width: 60,
-    height: 70,
-    justifyContent: 'center',
     alignItems: 'center',
+    width: 60, // Fixed width for proper centering
+    paddingVertical: 8,
     paddingHorizontal: 8,
-    marginRight: 12,
+    borderRadius: 16,
   },
-  dateItemInner: {
-    width: 44,
-    height: 60,
-    borderRadius: 22,
+  selectedDateItem: {
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+  },
+  dayName: {
+    fontSize: 13,
+    color: '#94A3B8',
+    marginBottom: 6,
+  },
+  selectedDayName: {
+    color: '#3B82F6',
+    fontWeight: '600',
+  },
+  dateCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#1A1A1A',
+    position: 'relative',
   },
-  selectedDateItemInner: {
+  selectedDateCircle: {
     backgroundColor: '#3B82F6',
   },
-  todayDateItemInner: {
+  todayCircle: {
     borderWidth: 1,
     borderColor: '#3B82F6',
   },
-  dateText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
+  selectedTodayCircle: {
+    borderColor: 'transparent',
   },
-  dayText: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 4,
+  dateText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   selectedDateText: {
     color: '#FFFFFF',
   },
-  selectedDayText: {
+  
+  // Top navigation buttons
+  navButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    marginBottom: 20,
+  },
+  navButton: {
+    flex: 1,
+    borderRadius: 12,
+    marginHorizontal: 4,
+    overflow: 'hidden',
+    height: 44,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 3,
+      },
+      web: {
+        cursor: 'pointer',
+      }
+    }),
+  },
+  navButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+    paddingHorizontal: 8,
+  },
+  navButtonText: {
     color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+    marginLeft: 6,
   },
   
-  // Quick Actions Card
-  actionsCard: {
+  // Challenge card styles
+  challengeCard: {
+    marginHorizontal: 16,
     marginBottom: 24,
-    borderRadius: 24,
+    borderRadius: 20,
+    overflow: 'hidden',
+    elevation: 4,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
-    elevation: 4,
+  },
+  challengeGradient: {
+    padding: 20,
+    borderRadius: 20,
+  },
+  challengeHeader: {
+    flexDirection: 'row',
+    marginBottom: 16,
+  },
+  challengeBadgeContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    marginRight: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
     overflow: 'hidden',
   },
-  actionsCardGradient: {
-    borderRadius: 24,
-    padding: 24,
+  challengeBadgeImage: {
+    width: 40,
+    height: 40,
   },
-  actionsCardTitle: {
+  challengeInfo: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  challengeMonthly: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#10B981',
+    marginBottom: 4,
+  },
+  challengeTitle: {
     fontSize: 18,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 24,
+    marginBottom: 2,
   },
-  actionsGrid: {
+  challengeSubtitle: {
+    fontSize: 13,
+    color: '#94A3B8',
+  },
+  progressSection: {
+    marginBottom: 16,
+  },
+  progressStatsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  actionButton: {
     alignItems: 'center',
-    width: '30%',
-  },
-  actionButtonGradient: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
     justifyContent: 'center',
-    alignItems: 'center',
     marginBottom: 12,
   },
-  actionText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#FFFFFF',
-  },
-  
-  // Chat Card
-  chatCardContainer: {
-    marginBottom: 24,
-    borderRadius: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-    overflow: 'hidden',
-  },
-  aiChatCard: {
-    borderRadius: 24,
-    overflow: 'hidden',
-  },
-  aiChatHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-  },
-  aiTitleArea: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  aiIconBackground: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  aiChatTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  chatContainer: {
-    overflow: 'hidden',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  messagesContainer: {
-    padding: 16,
-    paddingBottom: 0,
-  },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  input: {
+  progressStat: {
     flex: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    color: '#FFFFFF',
-    fontSize: 16,
-    maxHeight: 80,
+    alignItems: 'center',
   },
-  sendButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#3B82F6',
+  progressStatValue: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  progressStatLabel: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  progressDivider: {
+    height: 24,
+    width: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    marginHorizontal: 20,
+  },
+  progressBarContainer: {
+    marginBottom: 8,
+    height: 40,
+    position: 'relative',
+  },
+  progressBarBackground: {
+    height: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 4,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  progressBarFill: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    height: '100%',
+    backgroundColor: '#10B981',
+    borderRadius: 4,
+  },
+  milestoneMarker: {
+    position: 'absolute',
+    top: 12,
+    alignItems: 'center',
+    transform: [{ translateX: -8 }],
+  },
+  milestoneCircle: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderWidth: 2,
+    borderColor: '#1A1A1A',
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 10,
   },
-  sendButtonDisabled: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  completedMilestoneCircle: {
+    backgroundColor: '#10B981',
   },
-  
-  // Message Bubbles
-  messageBubble: {
-    padding: 14,
-    borderRadius: 18,
-    maxWidth: '80%',
-    marginBottom: 12,
+  milestoneLabel: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 4,
   },
-  userBubble: {
-    backgroundColor: '#3B82F6',
-    borderBottomRightRadius: 4,
-    alignSelf: 'flex-end',
+  badgeEarnedContainer: {
+    marginTop: 16,
   },
-  assistantBubble: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderBottomLeftRadius: 4,
-    alignSelf: 'flex-start',
-  },
-  userText: {
-    color: 'white',
-    fontSize: 16,
-  },
-  assistantText: {
-    color: 'white',
-    fontSize: 16,
-  },
-  assistantHeader: {
+  badgeEarnedGradient: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 6,
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
   },
-  assistantName: {
-    color: '#FF3B30',
-    fontSize: 12,
-    marginLeft: 4,
+  badgeEarnedText: {
+    color: '#10B981',
     fontWeight: '600',
+    fontSize: 14,
+    marginLeft: 8,
   },
   
-  // Stats Card
+  // Section titles
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    marginHorizontal: 16,
+    marginBottom: 12,
+  },
+  
+  // Stats section
   statsCardContainer: {
     marginBottom: 20,
   },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 16,
-  },
   cardContainer: {
-    borderRadius: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
+    borderRadius: 16,
     overflow: 'hidden',
+    marginHorizontal: 16,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      },
+      web: {
+        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+      }
+    }),
   },
   statsCard: {
-    borderRadius: 24,
-    padding: 20,
+    borderRadius: 16,
+    padding: 16,
   },
   statsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
   },
   statsIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: 'rgba(59, 130, 246, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -1177,33 +1333,22 @@ const styles = StyleSheet.create({
   },
   statsTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
     color: '#FFFFFF',
   },
   statsSubtitle: {
-    fontSize: 13,
-    color: '#888',
-    marginTop: 2,
-  },
-  statsContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  statsMetric: {
-    flex: 1,
-  },
-  statsCount: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  statsLabel: {
     fontSize: 14,
-    color: '#888',
+    color: '#A0AEC0',
+    marginTop: 4,
   },
   
-  // Search Modal
+  // Loading state
+  loadingContainer: {
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  
+  // User search modal
   modalOverlay: {
     flex: 1,
     justifyContent: 'center',
@@ -1319,9 +1464,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     marginTop: 20,
-  },
-  loadingContainer: {
-    marginTop: 20,
-    alignItems: 'center',
   },
 });

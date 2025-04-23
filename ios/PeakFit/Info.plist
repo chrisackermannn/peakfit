@@ -33,6 +33,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSHealthShareUsageDescription</key>
+	<string>We need access to your health data to track your fitness progress</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>We need permission to save your workouts to the Health app</string>
 	<key>UILaunchStoryboardName</key>
 	<string>SplashScreen</string>
 	<key>UIRequiredDeviceCapabilities</key>

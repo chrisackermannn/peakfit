@@ -139,21 +139,7 @@ export default function EditProfileScreen({ navigation }) {
   
   // Validate form inputs
   const validateForm = () => {
-    if (!username.trim()) {
-      Alert.alert('Error', 'Username is required');
-      return false;
-    }
-    
-    if (username.length < 3) {
-      Alert.alert('Error', 'Username must be at least 3 characters');
-      return false;
-    }
-    
-    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-      Alert.alert('Error', 'Username can only contain letters, numbers and underscore');
-      return false;
-    }
-    
+    // Username validation removed since field is removed
     return true;
   };
   
@@ -163,8 +149,7 @@ export default function EditProfileScreen({ navigation }) {
       // First, update Firestore doc
       const userRef = doc(db, 'users', user.uid);
       const updateData = {
-        username: username.toLowerCase(),
-        displayName: displayName || username,
+        displayName: displayName || user.displayName,
         bio: bio || '',
         updatedAt: new Date().toISOString()
       };
@@ -181,8 +166,7 @@ export default function EditProfileScreen({ navigation }) {
       try {
         // Create auth update object
         const authUpdateData = {
-          displayName: displayName || username,
-          username: username.toLowerCase(),
+          displayName: displayName || user.displayName,
           bio: bio || ''
         };
         
@@ -360,22 +344,6 @@ export default function EditProfileScreen({ navigation }) {
           
           <View style={styles.formContainer}>
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Username</Text>
-              <View style={styles.inputWrapper}>
-                <MaterialCommunityIcons name="account" size={20} color="#3B82F6" style={styles.inputIcon} />
-                <TextInput
-                  style={styles.input}
-                  value={username}
-                  onChangeText={setUsername}
-                  placeholder="Username"
-                  placeholderTextColor="#666"
-                  autoCapitalize="none"
-                  maxLength={20}
-                />
-              </View>
-            </View>
-            
-            <View style={styles.inputGroup}>
               <Text style={styles.label}>Display Name</Text>
               <View style={styles.inputWrapper}>
                 <MaterialCommunityIcons name="badge-account" size={20} color="#3B82F6" style={styles.inputIcon} />
@@ -414,7 +382,7 @@ export default function EditProfileScreen({ navigation }) {
             </View>
             
             <TouchableOpacity
-              style={styles.saveButtonContainer}
+              style={[styles.saveButtonContainer, { marginTop: 10 }]} // Added more top margin for better spacing
               onPress={handleSave}
               disabled={loading}
               activeOpacity={0.9}

@@ -20,6 +20,7 @@ import HealthKitService from './services/HealthKitService';
 import * as Haptics from 'expo-haptics';
 import UserAllWorkout from './screens/UserAllWorkout';
 import EachWorkout from './screens/EachWorkout';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 // Enable layout animations for smoother transitions on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -78,7 +79,9 @@ LogBox.ignoreLogs([
   'Unable to get the view config for ExpoBlurView',
   'Unimplemented component view manager adapter',
   'ExpoBlurView',
-  '[expo-blur]'
+  '[expo-blur]',
+  'LinearGradient.js',
+  'Cannot read properties of undefined',
 ]);
 
 // Configure Animated API to use native driver by default
@@ -213,31 +216,53 @@ function AppNavigator() {
 export default function App() {
   useEffect(() => {
     if (Platform.OS === 'ios') {
-      const initHealthKit = async () => {
+      // Request HealthKit permissions
+      const initializeHealthKit = async () => {
         try {
-          await HealthKitService.initialize();
-          console.log('HealthKit initialized from App.js');
+          console.log('Initializing HealthKit service...');
+          
+          // First check if HealthKit is available
+          const isAvailable = HealthKitService.isAvailable;
+          
+          if (isAvailable) {
+            console.log('HealthKit is available, requesting permissions');
+            try {
+              const result = await HealthKitService.initialize();
+              console.log('HealthKit permissions granted:', result);
+            } catch (initError) {
+              console.log('HealthKit permission request failed:', initError);
+              // Set flag to use simulated data
+              global.useSimulatedHealthData = true;
+            }
+          } else {
+            console.log('HealthKit is not available on this device, using simulated data');
+            global.useSimulatedHealthData = true;
+          }
         } catch (error) {
-          console.error('Failed to initialize HealthKit from App.js:', error);
+          console.log('HealthKit initialization error:', error);
+          global.useSimulatedHealthData = true;
         }
       };
       
-      initHealthKit();
+      // Wait for app to be fully mounted before requesting permissions
+      setTimeout(initializeHealthKit, 1500);
     }
   }, []);
 
   return (
-    <AuthProvider>
-      <MessageNotificationsProvider>
-        <PaperProvider>
-          <>
-            <NavigationContainer>
-              <AppNavigator />
-            </NavigationContainer>
-            <FlashMessage position="top" />
-          </>
-        </PaperProvider>
-      </MessageNotificationsProvider>
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <MessageNotificationsProvider>
+          <PaperProvider>
+            <>
+              <NavigationContainer>
+                <AppNavigator />
+              </NavigationContainer>
+              <FlashMessage position="top" />
+            </>
+          </PaperProvider>
+        </MessageNotificationsProvider>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }

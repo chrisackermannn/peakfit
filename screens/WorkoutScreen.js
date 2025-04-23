@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback, forwardRef } from 'react';
 import {
   View,
   Text,
-  StyleSheet, // Ensure StyleSheet is imported
+  StyleSheet,
   TouchableOpacity,
   TextInput,
   Modal,
@@ -16,7 +16,8 @@ import {
   Keyboard,
   Dimensions,
   Image,
-  FlatList
+  FlatList,
+  RefreshControl
 } from 'react-native';
 import { Button, Surface, IconButton, Divider } from 'react-native-paper';
 import { getInitialExercises, searchExercises } from '../data/exerciseAPI';
@@ -29,14 +30,35 @@ import { format } from 'date-fns';
 import { StatusBar } from 'expo-status-bar';
 import HealthKitService from '../services/HealthKitService';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useFocusEffect } from '@react-navigation/native';
 
-// Add this right after your imports
-// Safe alternative to BlurView to prevent errors
+// First, create a Safe ScrollView that properly handles all layout properties
+const SafeScrollView = forwardRef(({ 
+  children, 
+  style, 
+  contentContainerStyle,
+  refreshControl,
+  ...props 
+}, ref) => {
+  return (
+    <ScrollView
+      ref={ref}
+      style={[{ flex: 1 }, style]}
+      contentContainerStyle={contentContainerStyle}
+      refreshControl={refreshControl}
+      {...props}
+    >
+      {children}
+    </ScrollView>
+  );
+});
+
+// SafeBackdrop component with proper styling
 const SafeBackdrop = ({ children, style }) => {
   return (
     <View style={[
       StyleSheet.absoluteFill, 
-      { backgroundColor: 'rgba(0, 0, 0, 0.8)' },
+      { backgroundColor: 'rgba(0, 0, 0, 0.8)', justifyContent: 'center', alignItems: 'center' },
       style
     ]}>
       {children}
@@ -45,23 +67,28 @@ const SafeBackdrop = ({ children, style }) => {
 };
 
 // Exercise Details Modal - for adding sets to selected exercise
-const ExerciseSetModal = ({
-  visible,
-  onClose,
+const SetModal = ({ 
+  visible, 
+  onClose, 
+  onSave, 
   exerciseName,
-  onSave,
-  editingSet,
-  editingIndex
+  editingSet = null,
+  editingIndex = null,
+  insets
 }) => {
-  const [weight, setWeight] = useState(editingSet ? editingSet.weight.toString() : '');
-  const [reps, setReps] = useState(editingSet ? editingSet.reps.toString() : '');
-  const insets = useSafeAreaInsets();
+  const [weight, setWeight] = useState('');
+  const [reps, setReps] = useState('');
+  const [loading, setLoading] = useState(false);
   
-  // Reset inputs when modal opens with new data
   useEffect(() => {
     if (visible) {
-      setWeight(editingSet ? editingSet.weight.toString() : '');
-      setReps(editingSet ? editingSet.reps.toString() : '');
+      if (editingSet) {
+        setWeight(editingSet.weight.toString());
+        setReps(editingSet.reps.toString());
+      } else {
+        setWeight('');
+        setReps('');
+      }
     }
   }, [visible, editingSet]);
   
@@ -82,7 +109,7 @@ const ExerciseSetModal = ({
     onSave({
       weight: weightNum,
       reps: repsNum,
-      completed: false
+      completed: editingSet ? editingSet.completed : false
     }, editingIndex);
   };
   
@@ -179,7 +206,7 @@ const ExerciseSetModal = ({
   );
 };
 
-// Exercise Search Modal component
+// Search modal for exercises
 const ExerciseSearchModal = ({ 
   visible, 
   onClose, 
@@ -187,10 +214,8 @@ const ExerciseSearchModal = ({
   onSelectExercise, 
   searchQuery, 
   onSearchChange,
-  loadingExercises
+  loadingExercises 
 }) => {
-  const insets = useSafeAreaInsets();
-  
   return (
     <Modal
       visible={visible}
@@ -198,12 +223,10 @@ const ExerciseSearchModal = ({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <SafeBackdrop style={styles.blurContainer}>
-        <View style={[styles.exerciseModalContent, { 
-          paddingBottom: insets.bottom > 0 ? insets.bottom : 20 
-        }]}>
+      <SafeBackdrop>
+        <View style={styles.exerciseModalContent}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Search Exercises</Text>
+            <Text style={styles.modalTitle}>Find Exercise</Text>
             <IconButton
               icon="close"
               size={24}
@@ -211,7 +234,7 @@ const ExerciseSearchModal = ({
               onPress={onClose}
             />
           </View>
-          
+
           <View style={styles.searchSection}>
             <TextInput
               style={styles.searchInput}
@@ -235,7 +258,7 @@ const ExerciseSearchModal = ({
           ) : (
             <FlatList
               data={exercises}
-              keyExtractor={item => item.name || Math.random().toString()}
+              keyExtractor={(item, index) => item.id?.toString() || item.name?.toString() || index.toString()}
               renderItem={({item}) => (
                 <TouchableOpacity
                   style={styles.exerciseItem}
@@ -249,14 +272,14 @@ const ExerciseSearchModal = ({
                   <MaterialCommunityIcons name="chevron-right" size={20} color="#999" />
                 </TouchableOpacity>
               )}
-              style={styles.exerciseList}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{paddingBottom: 12}}
               ListEmptyComponent={
-                <Text style={styles.emptyText}>
-                  No exercises found. Try a different search.
-                </Text>
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>
+                    No exercises found. Try a different search.
+                  </Text>
+                </View>
               }
+              contentContainerStyle={{ paddingBottom: 20 }}
             />
           )}
         </View>
@@ -444,6 +467,119 @@ const ExerciseDemoModal = ({ visible, onClose, exercise }) => {
   );
 };
 
+// Template selection modal with improved LinearGradient and centered content
+const TemplatesModal = ({ visible, onClose, templates, onApply, loading }) => {
+  const insets = useSafeAreaInsets();
+  
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <SafeBackdrop>
+        <View style={[
+          styles.templateModalContainer,
+          { paddingBottom: Math.max(insets.bottom, 20) }
+        ]}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Workout Templates</Text>
+            <IconButton
+              icon="close"
+              size={24}
+              color="#FFF"
+              onPress={onClose}
+            />
+          </View>
+          
+          {loading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#3B82F6" />
+            </View>
+          ) : templates.length === 0 ? (
+            <View style={styles.emptyTemplatesContainer}>
+              <MaterialCommunityIcons name="file-document-outline" size={48} color="#444" />
+              <Text style={styles.emptyTemplatesText}>
+                You don't have any saved templates
+              </Text>
+              <Text style={styles.emptyTemplatesSubtext}>
+                Create templates by saving workouts
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={templates}
+              keyExtractor={item => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity 
+                  style={styles.templateItem}
+                  onPress={() => onApply(item)}
+                  activeOpacity={0.8}
+                >
+                  <LinearGradient
+                    colors={['#1F2937', '#111827']}
+                    style={styles.templateItemGradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                  >
+                    <View style={styles.templateInfo}>
+                      <Text style={styles.templateName}>{item.name || 'Unnamed Template'}</Text>
+                      <Text style={styles.templateMeta}>
+                        {item.exercises?.length || 0} exercises
+                      </Text>
+                    </View>
+                    <MaterialCommunityIcons name="chevron-right" size={24} color="#94A3B8" />
+                  </LinearGradient>
+                </TouchableOpacity>
+              )}
+              contentContainerStyle={styles.templatesList}
+            />
+          )}
+        </View>
+      </SafeBackdrop>
+    </Modal>
+  );
+};
+
+// Add a Template button to the WorkoutScreen
+const renderTemplateButton = () => (
+  <TouchableOpacity
+    style={styles.templateButton}
+    onPress={async () => {
+      await refreshTemplates(); // Refresh templates when button is pressed
+      setTemplatesModalVisible(true);
+    }}
+  >
+    <LinearGradient
+      colors={['#1F2937', '#111827']}
+      style={styles.templateButtonGradient}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+    >
+      <MaterialCommunityIcons name="file-document-outline" size={20} color="#FFFFFF" />
+      <Text style={styles.templateButtonText}>Templates</Text>
+    </LinearGradient>
+  </TouchableOpacity>
+);
+
+// Add this function to fetch the latest templates from Firebase
+const refreshTemplates = async () => {
+  try {
+    if (!user?.uid) return;
+    
+    console.log("Refreshing user templates from Firebase...");
+    const latestTemplates = await getUserTemplates(user.uid);
+    setTemplates(latestTemplates);
+    console.log(`Fetched ${latestTemplates.length} templates from Firebase`);
+    
+    return latestTemplates;
+  } catch (error) {
+    console.error("Error refreshing templates:", error);
+    return null;
+  }
+};
+
 // Main WorkoutScreen Component
 export function WorkoutScreen({ navigation }) {
   const { user } = useAuth();
@@ -485,6 +621,9 @@ export function WorkoutScreen({ navigation }) {
   const [postLoading, setPostLoading] = useState(false);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [templates, setTemplates] = useState([]);
+  
+  // State for refreshing
+  const [refreshing, setRefreshing] = useState(false);
   
   // Refs and animations
   const timerRef = useRef(null);
@@ -611,15 +750,39 @@ export function WorkoutScreen({ navigation }) {
     setSearchTimeout(timeout);
   };
   
-  // Select exercise from search
-  const selectExercise = (exercise) => {
+  // Select exercise from search and ensure it has a GIF
+  const selectExercise = async (exercise) => {
     console.log("Exercise selected:", exercise.name);
+    
+    // If no GIF URL exists, try to fetch it
+    if (!exercise.gifUrl && exercise.name) {
+      try {
+        const searchResults = await searchExercises(exercise.name);
+        if (searchResults && searchResults.length > 0) {
+          // Find the best match
+          const match = searchResults.find(result => 
+            result.name.toLowerCase() === exercise.name.toLowerCase()
+          ) || searchResults[0];
+          
+          exercise = {
+            ...exercise,
+            gifUrl: match.gifUrl,
+            equipment: exercise.equipment || match.equipment,
+            muscle: exercise.muscle || match.target || match.muscle,
+            instructions: exercise.instructions || match.instructions
+          };
+        }
+      } catch (error) {
+        console.log(`Could not fetch additional details for ${exercise.name}:`, error);
+      }
+    }
+    
     setSelectedExercise({
       name: exercise.name,
-      id: exercise.id, // Save the API id for possible later reference
-      gifUrl: exercise.gifUrl, // Save the gifUrl
+      id: exercise.id,
+      gifUrl: exercise.gifUrl,
       equipment: exercise.equipment,
-      muscle: exercise.muscle || exercise.target, // The API sometimes uses "target" instead of "muscle"
+      muscle: exercise.muscle || exercise.target,
       instructions: exercise.instructions
     });
     
@@ -780,14 +943,56 @@ export function WorkoutScreen({ navigation }) {
   };
 
   // Show exercise demo
-  const handleShowDemo = (exercise) => {
+  const handleShowDemo = async (exercise) => {
     setSelectedDemoExercise({
       ...exercise,
-      // If exercise was added from search, it already has gifUrl
-      // If not, we need to fetch it - this is a placeholder until we get the actual data
       gifUrl: exercise.gifUrl || null
     });
     setDemoModalVisible(true);
+    
+    // If no GIF URL exists, try to fetch it
+    if (!exercise.gifUrl && exercise.name) {
+      try {
+        console.log("Fetching GIF for exercise:", exercise.name);
+        const searchResults = await searchExercises(exercise.name);
+        
+        if (searchResults && searchResults.length > 0) {
+          // Find the match that's most similar to our exercise name
+          const match = searchResults.find(result => 
+            result.name.toLowerCase() === exercise.name.toLowerCase()
+          ) || searchResults[0];
+          
+          if (match && match.gifUrl) {
+            console.log("Found match:", match.name);
+            
+            // Update the exercise with GIF and additional info
+            setSelectedDemoExercise(prev => ({
+              ...prev,
+              gifUrl: match.gifUrl,
+              equipment: prev.equipment || match.equipment,
+              muscle: prev.muscle || match.target || match.muscle,
+              instructions: prev.instructions || match.instructions
+            }));
+            
+            // Also update the exercise in our workouts array for future reference
+            setWorkouts(prevWorkouts => prevWorkouts.map(workout => {
+              if (workout.id === exercise.id) {
+                return {
+                  ...workout,
+                  gifUrl: match.gifUrl,
+                  equipment: workout.equipment || match.equipment,
+                  muscle: workout.muscle || match.target || match.muscle,
+                  instructions: workout.instructions || match.instructions
+                };
+              }
+              return workout;
+            }));
+          }
+        }
+      } catch (error) {
+        console.log(`Could not fetch GIF for ${exercise.name}:`, error);
+      }
+    }
   };
   
   // Save workout to profile
@@ -953,58 +1158,126 @@ export function WorkoutScreen({ navigation }) {
   
   // Load templates
   const loadTemplates = async () => {
-    if (!user?.uid) return;
+    if (!user?.uid) return Promise.resolve();
     
     try {
       setLoadingTemplates(true);
       const userTemplates = await getUserTemplates(user.uid);
       setTemplates(userTemplates);
+      return userTemplates; // Return templates for promise chaining
     } catch (error) {
       console.error('Error loading templates:', error);
       Alert.alert('Error', 'Failed to load your workout templates');
+      throw error; // Propagate error for promise chaining
     } finally {
       setLoadingTemplates(false);
     }
   };
   
-  // Apply template - updated for new data structure
-  const applyTemplate = (template) => {
-    const templateExercises = template.exercises.map(ex => {
-      // Generate unique ID for this exercise
-      const newExerciseId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+  // Update the applyTemplate function
+  const onApply = async (template) => {
+    if (!template?.exercises || !Array.isArray(template.exercises)) {
+      Alert.alert('Invalid Template', 'This template has no exercises.');
+      return;
+    }
+    
+    try {
+      // Refresh templates first to get the most current data
+      await refreshTemplates();
       
-      // Create default set data
-      const sets = [{
-        weight: ex.weight || 45,
-        reps: ex.reps || 10,
-        completed: false
-      }];
+      // Now proceed with applying the template
+      const exercises = template.exercises;
+      console.log(`Applying template with ${exercises.length} exercises`);
       
-      // If multiple sets in template
-      if (ex.sets > 1) {
-        for (let i = 1; i < ex.sets; i++) {
-          sets.push({
-            weight: ex.weight || 45,
-            reps: ex.reps || 10,
-            completed: false
-          });
+      // Create workout entries for each exercise in the template
+      const newWorkouts = exercises.map(exercise => {
+        const exerciseId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+        
+        // Map each set but remove the weight value
+        let sets = [];
+        if (exercise.setDetails && Array.isArray(exercise.setDetails)) {
+          sets = exercise.setDetails.map(set => ({
+            reps: set.reps, // Keep reps from template
+            weight: 0, // Set weight to 0 instead of using template value
+            completed: false // Reset completion status
+          }));
         }
+        
+        return {
+          id: exerciseId,
+          name: exercise.name,
+          apiId: exercise.apiId,
+          gifUrl: exercise.gifUrl,
+          equipment: exercise.equipment,
+          muscle: exercise.muscle,
+          instructions: exercise.instructions,
+          sets: sets
+        };
+      });
+      
+      // Set the workouts state
+      setWorkouts(prevWorkouts => [...prevWorkouts, ...newWorkouts]);
+      
+      // Close the template modal and start the workout
+      setTemplatesModalVisible(false);
+      
+      if (!isWorkoutStarted) {
+        setIsWorkoutStarted(true);
+        setIsTiming(true);
       }
       
-      return {
-        id: newExerciseId,
-        name: ex.name,
-        sets
-      };
-    });
+      // Show success message
+      Alert.alert('Template Applied', `Added ${newWorkouts.length} exercises to your workout. Please set your weights.`);
+    } catch (error) {
+      console.error("Error applying template:", error);
+      Alert.alert('Error', 'Failed to apply template. Please try again.');
+    }
+  };
+
+  // Improved fetchMissingGifs function with better API integration
+  const fetchMissingGifs = async (exercises) => {
+    // Create a new array for exercises that need to be updated
+    const updatedExercises = [...exercises];
+    let hasChanges = false;
     
-    setWorkouts(templateExercises);
-    setTemplatesModalVisible(false);
+    // Process each exercise that doesn't have a GIF
+    for (let i = 0; updatedExercises.length; i++) {
+      const exercise = updatedExercises[i];
+      
+      if (!exercise.gifUrl && exercise.name) {
+        try {
+          console.log(`Fetching GIF for ${exercise.name}`);
+          const searchResults = await searchExercises(exercise.name);
+          
+          if (searchResults && searchResults.length > 0) {
+            // Find best match or use first result
+            const match = searchResults.find(result => 
+              result.name.toLowerCase() === exercise.name.toLowerCase()
+            ) || searchResults[0];
+            
+            if (match && match.gifUrl) {
+              // Update exercise with API data
+              updatedExercises[i] = {
+                ...exercise,
+                gifUrl: match.gifUrl,
+                equipment: exercise.equipment || match.equipment,
+                muscle: exercise.muscle || match.target || match.muscle,
+                instructions: exercise.instructions || match.instructions
+              };
+              
+              hasChanges = true;
+              console.log(`GIF found for ${exercise.name}`);
+            }
+          }
+        } catch (error) {
+          console.log(`Could not fetch GIF for ${exercise.name}:`, error);
+        }
+      }
+    }
     
-    if (!isWorkoutStarted) {
-      setIsWorkoutStarted(true);
-      setIsTiming(true);
-      setWorkoutTitle(template.name || "Template Workout");
+    // Only update state if we actually made changes
+    if (hasChanges) {
+      setWorkouts(updatedExercises);
     }
   };
   
@@ -1018,13 +1291,62 @@ export function WorkoutScreen({ navigation }) {
     
     return Math.round(totalWeight / 10);
   };
+
+  // Add refresh handler function
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    
+    // Reload templates
+    if (user?.uid) {
+      loadTemplates()
+        .then(() => {
+          // Refresh exercise list
+          return getInitialExercises(50);
+        })
+        .then((data) => {
+          setExercises(data);
+          setFilteredExercises(data);
+        })
+        .catch((error) => {
+          console.error('Error refreshing data:', error);
+        })
+        .finally(() => {
+          setRefreshing(false);
+        });
+    } else {
+      setRefreshing(false);
+    }
+  }, [user?.uid]);
+
+  // Use this focus effect to refresh templates whenever screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      // This will run when the screen is focused (navigated to)
+      console.log("WorkoutScreen focused - refreshing templates");
+      
+      if (user?.uid) {
+        // Load latest templates every time screen is focused
+        loadTemplates()
+          .then(templates => {
+            console.log(`Refreshed templates: ${templates?.length || 0} templates loaded`);
+          })
+          .catch(error => {
+            console.error("Error refreshing templates on focus:", error);
+          });
+      }
+      
+      // Return cleanup function (optional)
+      return () => {
+        // Anything to clean up when screen loses focus
+      };
+    }, [user?.uid])
+  );
   
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar style="light" />
       
       {!isWorkoutStarted ? (
-        // Start Workout Screen - Your existing code for the start screen
         <View style={styles.startWorkoutContainer}>
           <View style={styles.startWorkoutContent}>
             <View style={styles.logoContainer}>
@@ -1041,42 +1363,43 @@ export function WorkoutScreen({ navigation }) {
             <Text style={styles.welcomeTitle}>Ready to work out?</Text>
             <Text style={styles.welcomeSubtitle}>Track your progress and reach your fitness goals</Text>
             
-            <View style={styles.startButtonsContainer}>
-              <TouchableOpacity 
-                style={styles.startButton}
-                onPress={startWorkout}
-                activeOpacity={0.8}
+            <TouchableOpacity 
+              style={styles.startButton}
+              onPress={startWorkout}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={['#3B82F6', '#2563EB']}
+                style={styles.startButtonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
               >
-                <LinearGradient
-                  colors={['#3B82F6', '#2563EB']}
-                  style={styles.startButtonGradient}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                >
-                  <MaterialCommunityIcons name="dumbbell" size={24} color="#FFFFFF" />
-                  <Text style={styles.startButtonText}>Start New Workout</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-              
-              {/* Rest of your start screen */}
-            </View>
+                <MaterialCommunityIcons name="dumbbell" size={24} color="#FFFFFF" />
+                <Text style={styles.startButtonText}>Start New Workout</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.templatesButton}
+              onPress={() => setTemplatesModalVisible(true)}
+            >
+              <LinearGradient
+                colors={['#1F2937', '#111827']}
+                style={styles.templatesButtonGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              >
+                <MaterialCommunityIcons name="file-document-outline" size={24} color="#FFFFFF" />
+                <Text style={styles.templatesButtonText}>Use Template</Text>
+              </LinearGradient>
+            </TouchableOpacity>
           </View>
         </View>
       ) : (
-        // Active Workout Screen - Simple version to fix the black screen
-        <View style={{flex: 1, backgroundColor: '#0A0A0A'}}>
-          {/* Header with timer and finish button */}
-          <View style={{
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: 16,
-            borderBottomWidth: 1,
-            borderBottomColor: '#222'
-          }}>
+        <>
+          <View style={styles.activeWorkoutHeader}>
             <TouchableOpacity 
               onPress={() => {
-                // Show confirmation before cancelling
                 Alert.alert(
                   "Cancel Workout",
                   "Are you sure you want to cancel your workout? All progress will be lost.",
@@ -1086,194 +1409,142 @@ export function WorkoutScreen({ navigation }) {
                       text: "Yes", 
                       style: "destructive",
                       onPress: () => {
-                        // Clear interval and reset workout state
                         clearInterval(timerRef.current);
                         setIsTiming(false);
                         setIsWorkoutStarted(false);
                         setWorkouts([]);
                         setTimer(0);
-                        setWorkoutTitle("My Workout");
-                        setWorkoutNote("");
                       }
                     }
                   ]
                 );
               }}
-              style={{padding: 8}}
             >
-              <MaterialCommunityIcons name="close" size={24} color="#FFF" />
+              <MaterialCommunityIcons name="close" size={24} color="#FF3B30" />
             </TouchableOpacity>
             
-            <View style={{flexDirection: 'row', alignItems: 'center'}}>
-              <MaterialCommunityIcons name="clock-outline" size={24} color="#3B82F6" />
-              <Text style={{color: '#FFF', marginLeft: 8, fontSize: 16}}>
-                {Math.floor(timer/60).toString().padStart(2, '0')}:{(timer%60).toString().padStart(2, '0')}
-              </Text>
-            </View>
-            
-            {/* Workout title */}
             <TextInput
-              style={{
-                fontSize: 18,
-                fontWeight: '600',
-                color: '#FFF',
-                textAlign: 'center',
-                width: 150
-              }}
+              style={styles.workoutTitleInput}
               value={workoutTitle}
               onChangeText={setWorkoutTitle}
               placeholder="Workout Title"
               placeholderTextColor="#999"
             />
             
-            {/* Finish button */}
+            <View style={styles.timerContainer}>
+              <Text style={styles.timerText}>
+                {Math.floor(timer/60).toString().padStart(2, '0')}:{(timer%60).toString().padStart(2, '0')}
+              </Text>
+            </View>
+            
             <TouchableOpacity 
-              style={{
-                backgroundColor: '#3B82F6',
-                paddingVertical: 8,
-                paddingHorizontal: 16,
-                borderRadius: 6
-              }}
+              style={styles.finishButton}
               onPress={endWorkout}
             >
-              <Text style={{color: '#FFF', fontWeight: '600'}}>FINISH</Text>
+              <Text style={styles.finishButtonText}>Finish</Text>
             </TouchableOpacity>
           </View>
           
-          {/* Exercises List */}
           <ScrollView style={{flex: 1}}>
             {workouts.length === 0 ? (
-              <View style={{alignItems: 'center', padding: 40}}>
+              <View style={styles.emptyExercisesContainer}>
                 <MaterialCommunityIcons name="dumbbell" size={48} color="#333" />
-                <Text style={{color: '#FFF', marginTop: 16, marginBottom: 24}}>
-                  No exercises added yet
-                </Text>
+                <Text style={styles.emptyExercisesText}>No exercises added yet</Text>
                 <TouchableOpacity 
-                  style={{
-                    backgroundColor: '#3B82F6',
-                    paddingVertical: 12,
-                    paddingHorizontal: 20,
-                    borderRadius: 12
-                  }}
+                  style={styles.addFirstExerciseButton}
                   onPress={() => {
                     setSearchQuery('');
                     setFilteredExercises(exercises);
                     setSearchModalVisible(true);
                   }}
                 >
-                  <Text style={{color: '#FFF', fontWeight: '600'}}>Add Exercise</Text>
+                  <Text style={styles.addFirstExerciseText}>Add Exercise</Text>
                 </TouchableOpacity>
               </View>
             ) : (
-              workouts.map((exercise) => (
-                <View key={exercise.id} style={styles.exerciseCard}>
-                  <View style={styles.exerciseHeader}>
-                    <Text style={styles.exerciseName}>
-                      {exercise.name}
-                    </Text>
-                    <View style={styles.exerciseActions}>
-                      <TouchableOpacity 
-                        style={styles.exerciseAction}
-                        onPress={() => handleShowDemo(exercise)}
-                      >
-                        <MaterialCommunityIcons name="information" size={22} color="#3B82F6" />
-                      </TouchableOpacity>
-                      <TouchableOpacity 
-                        style={styles.exerciseAction}
-                        onPress={() => handleDeleteExercise(exercise.id)}
-                      >
-                        <MaterialCommunityIcons name="delete" size={22} color="#666" />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                  
-                  {/* Sets Table */}
-                  <View style={{borderRadius: 8, overflow: 'hidden'}}>
-                    <View style={{
-                      flexDirection: 'row',
-                      backgroundColor: '#222',
-                      padding: 10
-                    }}>
-                      <Text style={{flex: 1, color: '#999', fontSize: 12, fontWeight: '600'}}>SET</Text>
-                      <Text style={{flex: 1, color: '#999', fontSize: 12, fontWeight: '600'}}>LB</Text>
-                      <Text style={{flex: 1, color: '#999', fontSize: 12, fontWeight: '600'}}>REPS</Text>
-                      <Text style={{flex: 0.5, color: '#999', fontSize: 12, fontWeight: '600'}}></Text>
+              <>
+                {workouts.map((exercise) => (
+                  <View key={exercise.id} style={styles.exerciseCard}>
+                    <View style={styles.exerciseHeader}>
+                      <Text style={styles.exerciseName}>{exercise.name}</Text>
+                      <View style={styles.exerciseActions}>
+                        <TouchableOpacity 
+                          style={styles.exerciseAction}
+                          onPress={() => handleShowDemo(exercise)}
+                        >
+                          <MaterialCommunityIcons name="information" size={22} color="#3B82F6" />
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                          style={styles.exerciseAction}
+                          onPress={() => handleDeleteExercise(exercise.id)}
+                        >
+                          <MaterialCommunityIcons name="delete" size={22} color="#666" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
                     
-                    {exercise.sets.map((set, setIndex) => (
-                      <TouchableOpacity 
-                        key={setIndex} 
-                        style={{
-                          flexDirection: 'row',
-                          padding: 12,
-                          backgroundColor: set.completed ? 'rgba(34, 197, 94, 0.1)' : 'transparent',
-                          borderBottomWidth: 1,
-                          borderBottomColor: '#333',
-                          alignItems: 'center'
-                        }}
-                        onPress={() => toggleSetCompletion(exercise.id, setIndex)}
-                      >
-                        <Text style={{flex: 1, color: '#FFF'}}>{setIndex + 1}</Text>
-                        <Text style={{flex: 1, color: '#FFF'}}>{set.weight}</Text>
-                        <Text style={{flex: 1, color: '#FFF'}}>{set.reps}</Text>
-                        <View style={{flex: 0.5, alignItems: 'center'}}>
-                          <MaterialCommunityIcons 
-                            name={set.completed ? "check-circle" : "circle-outline"} 
-                            size={22} 
-                            color={set.completed ? "#22C55E" : "#666"} 
-                          />
+                    <View style={styles.setsTable}>
+                      <View style={styles.tableHeader}>
+                        <Text style={styles.tableHeaderText}>SET</Text>
+                        <Text style={styles.tableHeaderText}>LB</Text>
+                        <Text style={styles.tableHeaderText}>REPS</Text>
+                        <Text style={styles.tableHeaderText}></Text>
+                      </View>
+                      
+                      {exercise.sets.map((set, setIndex) => (
+                        <View key={setIndex} style={styles.setRow}>
+                          <Text style={styles.setCell}>{setIndex + 1}</Text>
+                          <Text style={styles.setCell}>{set.weight || '-'}</Text>
+                          <Text style={styles.setCell}>{set.reps || '-'}</Text>
+                          <View style={styles.setCellActions}>
+                            <TouchableOpacity 
+                              style={styles.editSetButton}
+                              onPress={() => handleEditSet(exercise.id, setIndex)}
+                            >
+                              <MaterialCommunityIcons name="pencil" size={20} color="#3B82F6" />
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                              onPress={() => toggleSetCompletion(exercise.id, setIndex)}
+                            >
+                              <MaterialCommunityIcons 
+                                name={set.completed ? "check-circle" : "circle-outline"} 
+                                size={22} 
+                                color={set.completed ? "#22C55E" : "#666"} 
+                              />
+                            </TouchableOpacity>
+                          </View>
                         </View>
-                      </TouchableOpacity>
-                    ))}
+                      ))}
+                    </View>
+                    
+                    <TouchableOpacity
+                      style={styles.addSetButton}
+                      onPress={() => handleAddSet(exercise.id)}
+                    >
+                      <MaterialCommunityIcons name="plus" size={18} color="#3B82F6" />
+                      <Text style={styles.addSetText}>Add Set</Text>
+                    </TouchableOpacity>
                   </View>
-                  
-                  {/* Add Set Button */}
-                  <TouchableOpacity
-                    style={{
-                      marginTop: 12,
-                      padding: 10,
-                      backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                      borderRadius: 8,
-                      alignItems: 'center'
-                    }}
-                    onPress={() => handleAddSet(exercise.id)}
-                  >
-                    <Text style={{color: '#3B82F6'}}>+ Add Set</Text>
-                  </TouchableOpacity>
-                </View>
-              ))
+                ))}
+                
+                <TouchableOpacity
+                  style={styles.addExerciseCardButton}
+                  onPress={() => {
+                    setSearchQuery('');
+                    setFilteredExercises(exercises);
+                    setSearchModalVisible(true);
+                  }}
+                >
+                  <MaterialCommunityIcons name="plus" size={20} color="#3B82F6" />
+                  <Text style={styles.addExerciseCardText}>Add Exercise</Text>
+                </TouchableOpacity>
+              </>
             )}
-            
-            {/* Add Exercise Button (if there are exercises) */}
-            {workouts.length > 0 && (
-              <TouchableOpacity
-                style={{
-                  margin: 16,
-                  padding: 16,
-                  backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                  borderRadius: 12,
-                  alignItems: 'center',
-                  flexDirection: 'row',
-                  justifyContent: 'center'
-                }}
-                onPress={() => {
-                  setSearchQuery('');
-                  setFilteredExercises(exercises);
-                  setSearchModalVisible(true);
-                }}
-              >
-                <MaterialCommunityIcons name="plus" size={24} color="#3B82F6" />
-                <Text style={{color: '#3B82F6', marginLeft: 8}}>Add Exercise</Text>
-              </TouchableOpacity>
-            )}
-            
-            {/* Bottom padding */}
-            <View style={{height: 80}} />
           </ScrollView>
-        </View>
+        </>
       )}
-      
-      {/* Your existing modals */}
+
+      {/* Modals */}
       <ExerciseSearchModal
         visible={searchModalVisible}
         onClose={() => setSearchModalVisible(false)}
@@ -1284,7 +1555,7 @@ export function WorkoutScreen({ navigation }) {
         loadingExercises={loadingExercises}
       />
       
-      <ExerciseSetModal
+      <SetModal
         visible={setModalVisible}
         onClose={() => {
           console.log("Closing set modal");
@@ -1296,6 +1567,7 @@ export function WorkoutScreen({ navigation }) {
         onSave={handleSaveSet}
         editingSet={editingSet}
         editingIndex={editingSetIndex}
+        insets={insets}
       />
       
       <CompletionModal
@@ -1334,216 +1606,32 @@ export function WorkoutScreen({ navigation }) {
         exercise={selectedDemoExercise}
       />
       
-      {/* Other modals */}
+      <TemplatesModal
+        visible={templatesModalVisible}
+        onClose={() => setTemplatesModalVisible(false)}
+        templates={templates}
+        onApply={onApply}
+        loading={loadingTemplates}
+      />
     </SafeAreaView>
   );
 }
+
+// Fix for the styles error in WorkoutScreen.js
+// Replace your current styles definition with this complete StyleSheet
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0A0A0A',
   },
-  
-  // START WORKOUT SCREEN
-  startWorkoutContainer: {
-    flex: 1,
-    backgroundColor: '#0A0A0A',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  startWorkoutContent: {
-    width: '100%',
-    maxWidth: 500,
-    alignItems: 'center',
-  },
-  logoContainer: {
-    marginBottom: 24,
-  },
-  logoBackground: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3B82F6',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.3,
-        shadowRadius: 12,
-      },
-      android: {
-        elevation: 8,
-      }
-    }),
-  },
-  welcomeTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    textAlign: 'center',
-    marginBottom: 12,
-  },
-  welcomeSubtitle: {
-    fontSize: 16,
-    color: '#999999',
-    textAlign: 'center',
-    marginBottom: 40,
-    maxWidth: '80%',
-  },
-  startButtonsContainer: {
-    width: '100%',
-    marginBottom: 48,
-  },
-  startButton: {
-    width: '100%',
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 16,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3B82F6',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 4,
-      }
-    }),
-  },
-  startButtonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-  },
-  startButtonText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '600',
-    marginLeft: 12,
-  },
-  templatesButton: {
-    width: '100%',
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  templatesButtonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 16,
-  },
-  templatesButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '500',
-    marginLeft: 10,
-  },
-  featuresContainer: {
-    width: '100%',
-  },
-  featureItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  featureIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  featureText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-  },
-  
-  // ACTIVE WORKOUT SCREEN
-  workoutContainer: {
-    flex: 1,
-  },
-  activeWorkoutHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
-  },
-  finishButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    backgroundColor: '#3B82F6',
-    borderRadius: 6,
-  },
-  finishButtonText: {
-    color: '#FFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  workoutTitleSection: {
-    padding: 20,
-  },
-  workoutTitleInput: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#FFF',
-    paddingVertical: 4,
-  },
-  timerDisplay: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
-    marginBottom: 16,
-  },
-  timerText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#3B82F6',
-    marginRight: 8,
-  },
-  timerIcon: {
-    marginTop: 2,
-  },
-  workoutNoteContainer: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 12,
-    padding: 12,
-    minHeight: 44,
-  },
-  workoutNoteInput: {
-    color: '#FFF',
-    fontSize: 15,
-  },
-  workoutNoteText: {
-    color: '#FFF',
-    fontSize: 15,
-  },
-  workoutNotePlaceholder: {
-    color: '#999',
-  },
-  exercisesContainer: {
-    flex: 1,
-  },
-  exercisesContent: {
-    padding: 20,
-    paddingTop: 0,
-  },
-  emptyExercises: {
-    alignItems: 'center',
-    justifyContent: 'center',
+  // Empty states
+  emptyExercisesContainer: {
     padding: 40,
+  },
+  emptyExercisesContent: {
+    alignItems: 'center', 
+    justifyContent: 'center',
   },
   emptyExercisesText: {
     fontSize: 16,
@@ -1552,6 +1640,21 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     textAlign: 'center',
   },
+  emptyButtonsRow: {
+    flexDirection: 'row',
+    marginTop: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Modal backgrounds
+  blurContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 0, // Keep top position the same
+    paddingBottom: 20, // Add extra space at bottom
+  },
+  // Button styles
   addFirstExerciseButton: {
     backgroundColor: '#3B82F6',
     paddingVertical: 12,
@@ -1563,6 +1666,93 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  templateButton: {
+    overflow: 'hidden',
+    borderRadius: 12,
+    marginLeft: 12,
+  },
+  templateButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  templateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  // Start screen styles
+  startWorkoutContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  startWorkoutContent: {
+    alignItems: 'center',
+  },
+  logoContainer: {
+    marginBottom: 24,
+  },
+  logoBackground: {
+    width: 100,
+    height: 100,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  welcomeTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  welcomeSubtitle: {
+    fontSize: 16,
+    color: '#999',
+    textAlign: 'center',
+  },
+  startButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginTop: 20,
+  },
+  startButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+  },
+  startButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginLeft: 10,
+  },
+  templatesButton: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginTop: 12,
+  },
+  templatesButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+  },
+  templatesButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginLeft: 10,
+  },
+  // Exercise card styles
   exerciseCard: {
     backgroundColor: '#1A1A1A',
     borderRadius: 16,
@@ -1578,43 +1768,57 @@ const styles = StyleSheet.create({
   exerciseName: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#3B82F6',
+    color: '#FFFFFF',
+    flex: 1,
   },
   exerciseActions: {
     flexDirection: 'row',
+    alignItems: 'center',
   },
   exerciseAction: {
-    marginLeft: 16,
+    padding: 8,
+    marginLeft: 8,
   },
+  // Sets table styles
   setsTable: {
     borderRadius: 8,
     overflow: 'hidden',
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
   },
-  setsTableHeader: {
+  tableHeader: {
     flexDirection: 'row',
     backgroundColor: '#222',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    padding: 10,
   },
-  setsTableHeaderCell: {
+  tableHeaderText: {
     flex: 1,
+    color: '#999',
     fontSize: 12,
     fontWeight: '600',
-    color: '#999',
+    textAlign: 'center',
   },
   setRow: {
     flexDirection: 'row',
-    paddingVertical: 14,
-    paddingHorizontal: 12,
+    alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
-    position: 'relative',
+    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
   },
   setCell: {
     flex: 1,
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#FFF',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  setCellActions: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  editSetButton: {
+    padding: 6,
+    marginRight: 8,
   },
   deleteSetButton: {
     position: 'absolute',
@@ -1655,216 +1859,157 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 8,
   },
-  bottomActions: {
-    padding: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#222',
-    backgroundColor: '#0A0A0A',
-  },
-  addExerciseButton: {
-    backgroundColor: '#3B82F6',
-    alignItems: 'center',
-    paddingVertical: 14,
-    borderRadius: 12,
-    marginBottom: 12,
-  },
-  addExerciseButtonText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  cancelWorkoutButton: {
-    alignItems: 'center',
-    paddingVertical: 14,
-  },
-  cancelWorkoutButtonText: {
-    color: '#FF3B30',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  
-  // MODAL STYLES
-  blurContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContainer: {
-    width: '90%',
-    maxWidth: 500,
-  },
-  completionModalContent: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 24,
-    padding: 24,
-    alignItems: 'center', // Center the logo
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'center', // Center the title
-    alignItems: 'center',
-    marginBottom: 20,
-    width: '100%', // Full width to ensure proper centering
-  },
-  completionTitle: {
-    fontSize: 24, // Slightly larger
-    fontWeight: '700',
-    color: '#FFF',
-    marginRight: 10,
-  },
-  workoutSummary: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  summaryItem: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    flex: 1,
-    marginHorizontal: 4,
-  },
-  summaryValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFF',
-    marginTop: 8,
-  },
-  summaryLabel: {
-    fontSize: 13,
-    color: '#999',
-    marginTop: 4,
-  },
-  completionDivider: {
-    height: 1,
-    backgroundColor: '#333',
-    marginVertical: 20,
-  },
-  completionActions: {
-    gap: 12,
-  },
-  completionButton: {
-    borderRadius: 12,
-    paddingVertical: 2,
-  },
-  saveButton: {
-    backgroundColor: '#3B82F6',
-  },
-  postButton: {
-    backgroundColor: '#10B981',
-  },
-  dismissButton: {
-    backgroundColor: 'transparent',
-    borderColor: '#3B82F6',
-  },
-  buttonContent: {
-    paddingVertical: 8,
-  },
-  buttonLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  
-  // TEMPLATES MODAL
-  templatesModalContent: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 24,
-    margin: 16,
-    padding: 20,
-    maxHeight: '80%',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#FFF',
-  },
-  templatesList: {
-    flex: 1,
-  },
-  templateItem: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    padding: 16,
-    marginVertical: 8,
-  },
-  templateContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  templateIconContainer: {
-    marginRight: 16,
-  },
-  templateIconGradient: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  templateInfo: {
-    flex: 1,
-  },
-  templateName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFF',
-  },
-  templateMeta: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 4,
-  },
-  
-  // EXERCISE SEARCH MODAL
-  exerciseModalContent: {
-    backgroundColor: '#1A1A1A',
-    borderRadius: 24,
-    margin: 16,
-    padding: 20,
-    height: '80%',
-  },
-  searchSection: {
-    position: 'relative',
-    marginBottom: 16,
-  },
-  searchInput: {
-    backgroundColor: '#222',
-    borderRadius: 12,
-    paddingHorizontal: 40,
-    paddingVertical: 14,
-    color: '#FFF',
-    fontSize: 16,
-  },
-  searchIcon: {
-    position: 'absolute',
-    left: 12,
-    top: 14,
-  },
-  exerciseList: {
-    flex: 1,
-  },
-  exerciseItem: {
+  // Workout header styles
+  activeWorkoutHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#222',
   },
-  exerciseItemText: {
-    color: '#FFF',
-    fontSize: 16,
+  finishButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: '#3B82F6',
+    borderRadius: 6,
   },
-  
-  // SET MODAL
+  finishButtonText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  workoutTitleSection: {
+    padding: 20,
+  },
+  workoutTitleInput: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    padding: 0,
+  },
+  workoutNoteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  workoutNoteButtonText: {
+    color: '#3B82F6',
+    fontSize: 14,
+    marginLeft: 4,
+  },
+  workoutNoteContainer: {
+    marginTop: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 12,
+    padding: 12,
+    minHeight: 44,
+  },
+  workoutNoteInput: {
+    color: '#FFF',
+    fontSize: 15,
+  },
+  workoutNoteText: {
+    color: '#FFF',
+    fontSize: 15,
+  },
+  workoutNotePlaceholder: {
+    color: '#999',
+  },
+  timerText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3B82F6',
+    marginRight: 8,
+  },
+  timerIcon: {
+    marginTop: 2,
+  },
+  // Modal styles for exercise demo
+  demoModalContainer: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 24,
+    margin: 16,
+    maxHeight: '80%',
+    width: '90%',
+    maxWidth: 600,
+    alignSelf: 'center',
+    overflow: 'hidden',
+  },
+  demoModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  demoModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    flex: 1,
+  },
+  gifContainer: {
+    height: 250,
+    backgroundColor: '#121212',
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  exerciseGif: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#121212',
+  },
+  loadingOverlay: {
+    position: 'absolute',
+    zIndex: 2,
+    alignItems: 'center', 
+    justifyContent: 'center',
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  noGifContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  noGifText: {
+    color: '#999',
+    fontSize: 16,
+    marginTop: 16,
+  },
+  metaInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  metaInfoText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    marginLeft: 8,
+  },
+  instructionsContainer: {
+    marginTop: 16,
+  },
+  instructionsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFF',
+    marginBottom: 8,
+  },
+  instructionsText: {
+    fontSize: 14,
+    color: '#94A3B8',
+    lineHeight: 22,
+  },
+  // Set modal styles
   setModalContent: {
     backgroundColor: '#1A1A1A',
     borderRadius: 24,
@@ -1907,115 +2052,229 @@ const styles = StyleSheet.create({
   cancelButton: {
     borderColor: '#3B82F6',
   },
-  
-  // EXERCISE DEMO MODAL
-  demoModalContent: {
+  // Search modal styles
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  // Template modal styles
+  templateModalContainer: {
     backgroundColor: '#1A1A1A',
     borderRadius: 24,
-    padding: 24,
+    margin: 16,
+    maxHeight: '80%',
+    maxWidth: 600,
+    width: '90%',
+    alignSelf: 'center',
+    overflow: 'hidden',
   },
-  gifContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
+  templatesList: {
+    padding: 16,
   },
-  exerciseGif: {
-    width: '100%',
-    height: 200,
+  templateItem: {
+    marginBottom: 12,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
-  loadingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  noGifContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  noGifText: {
-    color: '#999',
-    fontSize: 16,
-    marginTop: 8,
-  },
-  instructionsContainer: {
-    marginTop: 16,
-  },
-  instructionsTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFF',
-    marginBottom: 8,
-  },
-  instructionsText: {
-    fontSize: 14,
-    color: '#999',
-  },
-  metaInfoRow: {
+  templateItemGradient: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
+    justifyContent: 'space-between',
+    padding: 16,
   },
-  metaInfoText: {
+  templateInfo: {
+    flex: 1,
+  },
+  templateName: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 4,
+  },
+  templateMeta: {
     fontSize: 14,
-    color: '#999',
-    marginLeft: 8,
+    color: '#94A3B8',
   },
-  
-  // UTILITY STYLES
-  loadingContainer: {
+  emptyTemplatesContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
     padding: 40,
+  },
+  emptyTemplatesText: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#94A3B8',
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  emptyTemplatesSubtext: {
+    fontSize: 14,
+    color: '#64748B',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  // Search exercise styles
+  exerciseModalContent: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 24,
+    margin: 16,
+    maxHeight: '80%',
+    maxWidth: 600,
+    width: '90%',
+    alignSelf: 'center',
+    flex: 1,
+  },
+  searchSection: {
+    position: 'relative',
+    marginBottom: 16,
+    marginHorizontal: 16,
+  },
+  searchInput: {
+    backgroundColor: '#2A2A2A',
+    color: '#FFFFFF',
+    fontSize: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    paddingLeft: 44,
+    borderRadius: 12,
+  },
+  searchIcon: {
+    position: 'absolute',
+    left: 12,
+    top: 12,
+  },
+  exerciseItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  exerciseItemText: {
+    fontSize: 16,
+    color: '#FFFFFF',
+    flex: 1,
+  },
+  // Loading and empty states
+  loadingContainer: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 40,
   },
   emptyContainer: {
-    padding: 40,
-    justifyContent: 'center',
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
   },
   emptyText: {
     color: '#999',
     fontSize: 16,
     textAlign: 'center',
     marginTop: 16,
-    marginBottom: 4,
   },
-  emptySubtext: {
-    color: '#666',
-    fontSize: 14,
-    textAlign: 'center',
-  },
-  logoHeaderContainer: {
-    alignItems: 'center',
-    marginBottom: 16, // Space between logo and title
-  },
-  logoBackground: {
-    width: 80,
-    height: 80,
-    borderRadius: 20, // Slightly smaller corner radius
-    alignItems: 'center',
+  // Workout completion styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
     justifyContent: 'center',
-    overflow: 'hidden', // Keep logo inside rounded corners
-    ...Platform.select({
-      ios: {
-        shadowColor: '#3b82f6',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 6,
-      }
-    })
+    alignItems: 'center',
+    padding: 20,
   },
-  completionLogo: {
+  modalContainer: {
     width: '100%',
-    height: '100%',
+    maxWidth: 500,
+    alignSelf: 'center',
+  },
+  completionModalContent: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 24,
+    padding: 24,
+    alignItems: 'center', // Center the content
+    width: '100%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'center', // Center the title
+    alignItems: 'center',
+    marginBottom: 20,
+    width: '100%', // Full width to ensure proper centering
+  },
+  completionTitle: {
+    fontSize: 24, // Slightly larger
+    fontWeight: '700',
+    color: '#FFF',
+    marginRight: 10,
+  },
+  workoutSummary: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+    width: '100%',
+  },
+  summaryItem: {
+    backgroundColor: '#222',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    flex: 1,
+    marginHorizontal: 4,
+  },
+  summaryValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFF',
+    marginTop: 8,
+  },
+  summaryLabel: {
+    fontSize: 13,
+    color: '#999',
+    marginTop: 4,
+  },
+  completionDivider: {
+    height: 1,
+    backgroundColor: '#333',
+    marginVertical: 20,
+    width: '100%',
+  },
+  completionActions: {
+    width: '100%',
+    gap: 12,
+  },
+  completionButton: {
+    borderRadius: 12,
+    paddingVertical: 2,
+    width: '100%', // Make buttons full width
+  },
+  saveButton: {
+    backgroundColor: '#3B82F6',
+  },
+  postButton: {
+    backgroundColor: '#10B981',
+  },
+  dismissButton: {
+    backgroundColor: 'transparent',
+    borderColor: '#3B82F6',
+  },
+  buttonContent: {
+    paddingVertical: 8,
+  },
+  buttonLabel: {
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

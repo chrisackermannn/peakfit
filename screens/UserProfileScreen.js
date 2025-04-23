@@ -11,19 +11,24 @@ import {
   FlatList,
   Alert,
   Platform,
-  StatusBar
+  StatusBar,
+  Modal,
+  TextInput,
+  TouchableWithoutFeedback,
+  Keyboard
 } from 'react-native';
 import { Surface, Button, IconButton } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
-import { getUserWorkouts } from '../data/firebaseHelpers';
-import { format } from 'date-fns';
+import { saveTemplate } from '../data/firebaseHelpers';
+import { format, formatDistanceToNow } from 'date-fns';
 import { startDirectMessage } from '../data/messagingHelpers';
 import { CommonActions } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { showMessage } from "react-native-flash-message";
 
 const defaultAvatar = require('../assets/default-avatar.png');
 
@@ -38,341 +43,416 @@ export default function UserProfileScreen({ route, navigation }) {
   const [error, setError] = useState(null);
   const [isFriend, setIsFriend] = useState(false);
   const [friendLoading, setFriendLoading] = useState(false);
-  // For iOS safe area bottom padding
-  const bottomInset = Platform.OS === 'ios' ? 24 : 0;
+  const [templateName, setTemplateName] = useState('');
+  const [templateNameModalVisible, setTemplateNameModalVisible] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
   
-  // Navigation helpers
-  const navigateToTab = (tabName) => {
-    navigation.dispatch(
-      CommonActions.reset({
-        index: 0,
-        routes: [
-          { name: 'Tabs', params: { screen: tabName } },
-        ],
-      })
-    );
+  // Format duration helper
+  const formatDuration = (seconds) => {
+    if (!seconds) return '0m';
+    
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    
+    if (minutes === 0) {
+      return `${remainingSeconds}s`;
+    } else if (remainingSeconds === 0) {
+      return `${minutes}m`;
+    } else {
+      return `${minutes}m ${remainingSeconds}s`;
+    }
   };
-  
-  // Load user data
+
   useEffect(() => {
-    const loadData = async () => {
+    const loadUserData = async () => {
       try {
         setLoading(true);
-        setError(null);
         
-        // Get user profile data
-        const userDoc = await getDoc(doc(db, 'users', userId));
-        if (!userDoc.exists()) {
+        // Fetch user profile data
+        const userDocRef = doc(db, 'users', userId);
+        const userSnapshot = await getDoc(userDocRef);
+        
+        if (!userSnapshot.exists()) {
           setError('User not found');
           setLoading(false);
           return;
         }
         
-        setUserData(userDoc.data());
+        const userData = {
+          id: userSnapshot.id,
+          ...userSnapshot.data()
+        };
+        
+        setUserData(userData);
         
         // Check if this user is in the current user's friends list
         if (user?.uid) {
-          const currentUserDoc = await getDoc(doc(db, 'users', user.uid));
-          if (currentUserDoc.exists()) {
-            const friends = currentUserDoc.data().friends || [];
+          const currentUserRef = doc(db, 'users', user.uid);
+          const currentUserSnap = await getDoc(currentUserRef);
+          
+          if (currentUserSnap.exists()) {
+            const friends = currentUserSnap.data().friends || [];
             setIsFriend(friends.includes(userId));
           }
         }
         
-        // Get user's workouts
-        const userWorkouts = await getUserWorkouts(userId);
-        setWorkouts(userWorkouts);
+        // Fetch user's public workouts from globalWorkouts collection
+        // Using only where clause to avoid requiring compound index
+        const workoutsQuery = query(
+          collection(db, 'globalWorkouts'),
+          where('userId', '==', userId)
+        );
+        
+        const workoutsSnapshot = await getDocs(workoutsQuery);
+        
+        // Sort the workouts on client side by createdAt date
+        const workoutsData = workoutsSnapshot.docs
+          .map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate ? 
+                       doc.data().createdAt.toDate() : 
+                       new Date()
+          }))
+          .sort((a, b) => b.createdAt - a.createdAt); // Sort newest first
+        
+        setWorkouts(workoutsData);
+        setLoading(false);
       } catch (err) {
-        console.error('Error loading profile:', err);
-        setError('Failed to load profile data');
-      } finally {
+        console.error('Error loading user profile:', err);
+        setError('Failed to load user data');
         setLoading(false);
       }
     };
     
-    loadData();
+    loadUserData();
   }, [userId, user?.uid]);
   
-  // Toggle friend status
-  const toggleFriend = async () => {
-    if (!user?.uid) return;
+  const handleFriendToggle = async () => {
+    if (!user?.uid) {
+      Alert.alert('Sign in required', 'Please sign in to add friends');
+      return;
+    }
     
     try {
       setFriendLoading(true);
-      const userRef = doc(db, 'users', user.uid);
+      
+      const currentUserRef = doc(db, 'users', user.uid);
       
       if (isFriend) {
-        // Remove friend
-        await updateDoc(userRef, {
+        // Remove from friends list
+        await updateDoc(currentUserRef, {
           friends: arrayRemove(userId)
         });
+        
+        setIsFriend(false);
       } else {
-        // Add friend
-        await updateDoc(userRef, {
+        // Add to friends list
+        await updateDoc(currentUserRef, {
           friends: arrayUnion(userId)
         });
+        
+        setIsFriend(true);
       }
-      
-      setIsFriend(!isFriend);
-    } catch (error) {
-      console.error('Error toggling friend status:', error);
+    } catch (err) {
+      console.error('Error updating friends:', err);
+      Alert.alert('Error', 'Failed to update friends list');
     } finally {
       setFriendLoading(false);
     }
   };
   
-  // Start chat
-  const startChat = async () => {
+  const handleMessage = async () => {
+    if (!user?.uid) {
+      Alert.alert('Sign in required', 'Please sign in to send messages');
+      return;
+    }
+    
     try {
-      if (!user?.uid || !userId) return;
+      const chatId = await startDirectMessage(user.uid, userId);
       
-      // Use your custom messaging helper
-      const conversation = await startDirectMessage(user.uid, userId);
+      if (chatId) {
+        // Change from 'ChatScreen' to 'ChatConversationScreen'
+        navigation.navigate('ChatConversationScreen', { 
+          chatId, 
+          otherUserId: userId
+        });
+      } else {
+        throw new Error('Failed to create chat');
+      }
+    } catch (err) {
+      console.error('Error starting message:', err);
+      Alert.alert('Error', 'Failed to start conversation');
+    }
+  };
+
+  // Copy workout to templates
+  const copyWorkoutTemplate = (workout) => {
+    if (!user?.uid) {
+      Alert.alert('Sign In Required', 'Please sign in to save templates');
+      return;
+    }
+    
+    setSelectedTemplate(workout);
+    setTemplateName(workout.name || 'New Template');
+    setTemplateNameModalVisible(true);
+  };
+  
+  // Save workout template
+  const saveWorkoutTemplate = async () => {
+    if (!templateName.trim()) {
+      Alert.alert('Error', 'Please enter a template name');
+      return;
+    }
+    
+    try {
+      await saveTemplate(user.uid, {
+        name: templateName,
+        exercises: selectedTemplate.exercises,
+        createdAt: new Date(),
+        sourceWorkout: {
+          id: selectedTemplate.id,
+          userId: selectedTemplate.userId,
+          userDisplayName: selectedTemplate.userDisplayName || 'Anonymous'
+        }
+      });
       
-      navigation.navigate('ChatConversation', { 
-        conversationId: conversation.id,
-        otherUser: conversation.otherUser
+      setTemplateNameModalVisible(false);
+      
+      showMessage({
+        message: "Template Saved",
+        description: "Workout template has been saved to your library",
+        type: "success",
+        duration: 3000
       });
     } catch (error) {
-      console.error('Error starting chat:', error);
-      Alert.alert('Error', 'Could not start conversation');
+      console.error('Error saving template:', error);
+      Alert.alert('Error', 'Could not save workout template');
     }
   };
   
-  // Format date helper
-  const formatDate = (timestamp) => {
-    if (!timestamp) return 'Unknown date';
-    const date = timestamp.toDate ? timestamp.toDate() : 
-                (timestamp instanceof Date ? timestamp : new Date(timestamp));
-    return format(date, 'MMM d, yyyy');
+  const renderWorkoutItem = ({ item }) => {
+    // Format date for display
+    let timeAgo = 'recently';
+    try {
+      if (item.createdAt instanceof Date) {
+        timeAgo = formatDistanceToNow(item.createdAt, { addSuffix: true });
+      }
+    } catch (error) {
+      console.log('Error formatting date:', error);
+    }
+    
+    return (
+      <Surface style={styles.workoutCard}>
+        <LinearGradient
+          colors={['#1A1A1A', '#131313']}
+          style={styles.cardGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+        >
+          <View style={styles.workoutHeader}>
+            <View>
+              <Text style={styles.workoutName}>{item.name || "Workout"}</Text>
+              <Text style={styles.workoutDate}>{timeAgo}</Text>
+            </View>
+            
+            <TouchableOpacity 
+              onPress={() => copyWorkoutTemplate(item)}
+              style={styles.saveTemplateButton}
+            >
+              <MaterialCommunityIcons name="content-save-outline" size={18} color="#3B82F6" />
+              <Text style={styles.saveTemplateText}>Save</Text>
+            </TouchableOpacity>
+          </View>
+          
+          <View style={styles.workoutMeta}>
+            <View style={styles.metaItem}>
+              <MaterialCommunityIcons name="clock-outline" size={16} color="#60A5FA" />
+              <Text style={styles.metaText}>{formatDuration(item.duration)}</Text>
+            </View>
+            
+            <View style={styles.metaItem}>
+              <MaterialCommunityIcons name="dumbbell" size={16} color="#60A5FA" />
+              <Text style={styles.metaText}>{item.exercises?.length || 0} exercises</Text>
+            </View>
+            
+            <View style={styles.metaItem}>
+              <MaterialCommunityIcons name="weight" size={16} color="#60A5FA" />
+              <Text style={styles.metaText}>
+                {Math.floor(item.totalWeight || 0).toLocaleString()} lb
+              </Text>
+            </View>
+          </View>
+          
+          {/* Exercise List */}
+          <View style={styles.exercisesList}>
+            {item.exercises?.slice(0, 3).map((exercise, index) => (
+              <View key={index} style={styles.exerciseItem}>
+                <Text style={styles.exerciseName}>{exercise.name}</Text>
+                <Text style={styles.exerciseDetails}>
+                  {exercise.sets} × {exercise.reps} @ {exercise.weight}lbs
+                </Text>
+              </View>
+            ))}
+            
+            {(item.exercises?.length || 0) > 3 && (
+              <Text style={styles.moreExercises}>+{item.exercises.length - 3} more exercises</Text>
+            )}
+          </View>
+        </LinearGradient>
+      </Surface>
+    );
   };
-
-  // Hide the default header
-  useEffect(() => {
-    navigation.setOptions({
-      headerShown: false
-    });
-  }, [navigation]);
   
   if (loading) {
     return (
-      <LinearGradient 
-        colors={['#0A0A0A', '#1A1A1A']} 
-        style={styles.loadingContainer}
-      >
-        <StatusBar barStyle="light-content" />
+      <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#3B82F6" />
-      </LinearGradient>
+      </View>
     );
   }
   
   if (error) {
     return (
-      <LinearGradient 
-        colors={['#0A0A0A', '#1A1A1A']} 
-        style={styles.errorContainer}
-      >
-        <StatusBar barStyle="light-content" />
-        <MaterialCommunityIcons name="alert-circle-outline" size={60} color="#E53E3E" />
+      <View style={styles.errorContainer}>
+        <MaterialCommunityIcons name="alert-circle" size={60} color="#f43f5e" />
         <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity 
-          style={styles.errorButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.errorButtonText}>Go Back</Text>
-        </TouchableOpacity>
-      </LinearGradient>
+      </View>
     );
   }
-  
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
       
-      {/* Top gradient header with profile info */}
-      <LinearGradient
-        colors={['#111827', '#1E293B']}
-        start={{x: 0, y: 0}}
-        end={{x: 1, y: 1}}
-        style={[styles.header, { paddingTop: insets.top }]}
-      >
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
+      {/* Header with back button */}
+      <View style={[styles.header, { paddingTop: insets.top > 0 ? insets.top : 16 }]}>
+        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
           <MaterialCommunityIcons name="arrow-left" size={24} color="#FFFFFF" />
         </TouchableOpacity>
-        
-        <View style={styles.profileHeaderContent}>
+      </View>
+      
+      <ScrollView style={styles.scrollView}>
+        {/* Profile Info */}
+        <View style={styles.profileContainer}>
           <Image 
             source={userData?.photoURL ? { uri: userData.photoURL } : defaultAvatar} 
             style={styles.profileImage}
-            defaultSource={defaultAvatar}
           />
-          
-          <View style={styles.profileInfo}>
-            <Text style={styles.displayName}>{userData?.displayName || userData?.username}</Text>
-            <Text style={styles.username}>@{userData?.username}</Text>
-            
-            <View style={styles.joinedInfo}>
-              <MaterialCommunityIcons name="calendar" size={14} color="#94A3B8" />
-              <Text style={styles.joinedText}>
-                Joined {userData?.createdAt ? formatDate(userData.createdAt) : 'recently'}
-              </Text>
-            </View>
+          <View style={styles.userInfo}>
+            <Text style={styles.displayName}>
+              {userData?.displayName || userData?.username || 'User'}
+            </Text>
+            <Text style={styles.username}>@{userData?.username || 'username'}</Text>
           </View>
-        </View>
-      </LinearGradient>
-      
-      {/* Action buttons */}
-      <View style={styles.actionContainer}>
-        <LinearGradient
-          colors={['rgba(30, 41, 59, 0.7)', 'rgba(15, 23, 42, 0.7)']}
-          style={styles.actionsGradient}
-        >
-          {user?.uid !== userId && (
-            <View style={styles.actionButtons}>
-              <TouchableOpacity
-                style={[
-                  styles.actionButton,
-                  isFriend ? styles.unfriendButton : styles.friendButton
-                ]}
-                onPress={toggleFriend}
-                disabled={friendLoading}
-              >
-                <LinearGradient
-                  colors={isFriend ? ['#475569', '#334155'] : ['#3B82F6', '#2563EB']}
-                  style={styles.actionButtonGradient}
-                >
-                  {friendLoading ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <MaterialCommunityIcons 
-                        name={isFriend ? "account-minus" : "account-plus"} 
-                        size={18} 
-                        color="#FFFFFF" 
-                      />
-                      <Text style={styles.actionButtonText}>
-                        {isFriend ? 'Unfriend' : 'Add Friend'}
-                      </Text>
-                    </>
-                  )}
-                </LinearGradient>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={startChat}
-              >
-                <LinearGradient
-                  colors={['#10B981', '#059669']}
-                  style={styles.actionButtonGradient}
-                >
-                  <MaterialCommunityIcons name="chat" size={18} color="#FFFFFF" />
-                  <Text style={styles.actionButtonText}>Message</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
-          )}
-        </LinearGradient>
-      </View>
-      
-      {/* User bio */}
-      {userData?.bio && (
-        <View style={styles.bioContainer}>
-          <LinearGradient
-            colors={['rgba(30, 41, 59, 0.4)', 'rgba(15, 23, 42, 0.4)']}
-            style={styles.bioGradient}
-          >
-            <Text style={styles.bioText}>{userData.bio}</Text>
-          </LinearGradient>
-        </View>
-      )}
-      
-      {/* Workouts section */}
-      <View style={styles.workoutsSection}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Recent Workouts</Text>
-          <Text style={styles.workoutCount}>{workouts.length}</Text>
         </View>
         
-        {workouts.length > 0 ? (
-          <FlatList
-            data={workouts}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <View style={styles.workoutCard}>
-                <LinearGradient
-                  colors={['rgba(30, 41, 59, 0.6)', 'rgba(15, 23, 42, 0.6)']}
-                  style={styles.workoutGradient}
-                >
-                  <View style={styles.workoutHeader}>
-                    <View style={styles.workoutDate}>
-                      <LinearGradient
-                        colors={['#3B82F6', '#2563EB']}
-                        style={styles.dateCircle}
-                      >
-                        <Text style={styles.dateDay}>
-                          {item.createdAt ? format(item.createdAt.toDate(), 'd') : '--'}
-                        </Text>
-                        <Text style={styles.dateMonth}>
-                          {item.createdAt ? format(item.createdAt.toDate(), 'MMM') : '---'}
-                        </Text>
-                      </LinearGradient>
-                    </View>
-                    
-                    <View style={styles.workoutInfo}>
-                      <Text style={styles.workoutTitle}>{item.title || "Workout"}</Text>
-                      <Text style={styles.workoutDuration}>
-                        {item.duration ? `${Math.round(item.duration / 60)} min` : 'No duration'}
-                      </Text>
-                    </View>
-                  </View>
-                  
-                  <View style={styles.workoutStats}>
-                    <View style={styles.statItem}>
-                      <MaterialCommunityIcons name="weight" size={16} color="#60A5FA" />
-                      <Text style={styles.statValue}>
-                        {item.totalWeight ? `${Math.round(item.totalWeight)} lbs` : '--'}
-                      </Text>
-                      <Text style={styles.statLabel}>Volume</Text>
-                    </View>
-                    
-                    <View style={styles.statItem}>
-                      <MaterialCommunityIcons name="dumbbell" size={16} color="#34D399" />
-                      <Text style={styles.statValue}>
-                        {item.exercises?.length || 0}
-                      </Text>
-                      <Text style={styles.statLabel}>Exercises</Text>
-                    </View>
-                    
-                    <View style={styles.statItem}>
-                      <MaterialCommunityIcons name="fire" size={16} color="#F87171" />
-                      <Text style={styles.statValue}>
-                        {item.calories ? `${item.calories}` : '--'}
-                      </Text>
-                      <Text style={styles.statLabel}>Calories</Text>
-                    </View>
-                  </View>
-                </LinearGradient>
-              </View>
-            )}
-            contentContainerStyle={styles.workoutsList}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={
-              <View style={styles.emptyWorkouts}>
-                <Text style={styles.emptyText}>No workouts yet</Text>
-              </View>
-            }
-          />
-        ) : (
-          <View style={styles.emptyWorkouts}>
-            <MaterialCommunityIcons name="dumbbell" size={60} color="#374151" />
-            <Text style={styles.emptyText}>No workouts yet</Text>
+        {/* Action Buttons */}
+        {user?.uid && userId !== user.uid && (
+          <View style={styles.actionButtons}>
+            <TouchableOpacity 
+              style={[styles.actionButton, isFriend ? styles.unfriendButton : styles.friendButton]}
+              onPress={handleFriendToggle}
+              disabled={friendLoading}
+            >
+              <MaterialCommunityIcons 
+                name={isFriend ? "account-remove" : "account-plus"} 
+                size={20} 
+                color={isFriend ? "#FF3B30" : "#3B82F6"} 
+              />
+              <Text style={[styles.actionButtonText, isFriend ? styles.unfriendText : styles.friendText]}>
+                {isFriend ? 'Unfriend' : 'Add Friend'}
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.messageButton}
+              onPress={handleMessage}
+            >
+              <MaterialCommunityIcons name="message-text" size={20} color="#3B82F6" />
+              <Text style={styles.messageButtonText}>Message</Text>
+            </TouchableOpacity>
           </View>
         )}
-      </View>
+        
+        {/* Workouts Section */}
+        <View style={styles.workoutSection}>
+          <Text style={styles.sectionTitle}>Workouts</Text>
+          
+          {workouts.length > 0 ? (
+            workouts.map((workout) => (
+              <View key={workout.id} style={styles.workoutWrapper}>
+                {renderWorkoutItem({ item: workout })}
+              </View>
+            ))
+          ) : (
+            <View style={styles.emptyWorkouts}>
+              <MaterialCommunityIcons name="dumbbell" size={50} color="#666" />
+              <Text style={styles.emptyText}>No workouts to show</Text>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      {/* Save Template Modal */}
+      <Modal
+        visible={templateNameModalVisible}
+        transparent={true}
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setTemplateNameModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity 
+            style={styles.modalDismissArea} 
+            activeOpacity={1} 
+            onPress={() => setTemplateNameModalVisible(false)}
+          >
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+              <View style={styles.templateModalContent}>
+                <Text style={styles.modalTitle}>Save Workout Template</Text>
+                <TextInput
+                  style={styles.templateNameInput}
+                  placeholder="Template Name"
+                  placeholderTextColor="#777"
+                  value={templateName}
+                  onChangeText={setTemplateName}
+                  autoFocus
+                />
+                <View style={styles.templateModalButtons}>
+                  <Button
+                    mode="text"
+                    onPress={() => setTemplateNameModalVisible(false)}
+                    style={{ flex: 1 }}
+                    labelStyle={{ color: '#999', fontWeight: '600', fontSize: 16 }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    mode="contained"
+                    onPress={saveWorkoutTemplate}
+                    style={{
+                      flex: 1.3,
+                      borderRadius: 12,
+                      backgroundColor: '#3B82F6',
+                    }}
+                    contentStyle={{
+                      paddingVertical: 8,
+                    }}
+                    labelStyle={{
+                      color: '#FFF',
+                      fontWeight: '600',
+                      fontSize: 16,
+                    }}
+                  >
+                    Save
+                  </Button>
+                </View>
+              </View>
+            </TouchableWithoutFeedback>
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -382,251 +462,261 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0A0A0A',
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  errorText: {
-    fontSize: 18,
-    color: '#FFF',
-    textAlign: 'center',
-    marginTop: 20,
-    marginBottom: 30,
-  },
-  errorButton: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#3B82F6',
-    borderRadius: 8,
-  },
-  errorButtonText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  
-  // Header styles
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingBottom: 24,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    overflow: 'hidden',
+    paddingBottom: 16,
   },
   backButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
-    marginTop: 10,
-    marginBottom: 16,
   },
-  profileHeaderContent: {
-    flexDirection: 'row',
+  scrollView: {
+    flex: 1,
+  },
+  profileContainer: {
     alignItems: 'center',
+    paddingVertical: 24,
   },
   profileImage: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    borderWidth: 3,
-    borderColor: '#3B82F6',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    marginBottom: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
   },
-  profileInfo: {
-    marginLeft: 16,
-    flex: 1,
+  userInfo: {
+    alignItems: 'center',
   },
   displayName: {
     fontSize: 24,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 4,
   },
   username: {
     fontSize: 16,
     color: '#94A3B8',
-    marginBottom: 8,
-  },
-  joinedInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  joinedText: {
-    fontSize: 14,
-    color: '#94A3B8',
-    marginLeft: 6,
-  },
-  
-  // Action buttons section
-  actionContainer: {
-    paddingHorizontal: 16,
-    marginTop: -20,
-    zIndex: 10,
-  },
-  actionsGradient: {
-    borderRadius: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    marginTop: 4,
   },
   actionButtons: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+    gap: 12,
   },
   actionButton: {
-    flex: 1,
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginHorizontal: 5,
-  },
-  actionButtonGradient: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 999,
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+  },
+  friendButton: {
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+  },
+  unfriendButton: {
+    backgroundColor: 'rgba(255, 59, 48, 0.1)',
   },
   actionButtonText: {
-    color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600',
     marginLeft: 8,
   },
-  friendButton: {
-    backgroundColor: '#3B82F6',
+  friendText: {
+    color: '#3B82F6',
   },
-  unfriendButton: {
-    backgroundColor: '#475569',
+  unfriendText: {
+    color: '#FF3B30',
   },
-  
-  // Bio section
-  bioContainer: {
-    paddingHorizontal: 16,
-    marginTop: 16,
-  },
-  bioGradient: {
-    borderRadius: 16,
-    padding: 16,
-  },
-  bioText: {
-    fontSize: 16,
-    color: '#E2E8F0',
-    lineHeight: 24,
-  },
-  
-  // Workouts section
-  workoutsSection: {
-    flex: 1,
-    marginTop: 20,
-    paddingBottom: 20,
-  },
-  sectionHeader: {
+  messageButton: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    marginBottom: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 999,
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+  },
+  messageButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#3B82F6',
+    marginLeft: 8,
+  },
+  workoutSection: {
+    padding: 16,
+    paddingBottom: 40,
   },
   sectionTitle: {
     fontSize: 20,
     fontWeight: '700',
     color: '#FFFFFF',
-  },
-  workoutCount: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#3B82F6',
-  },
-  workoutsList: {
-    padding: 16,
-  },
-  workoutCard: {
-    marginBottom: 16,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  workoutGradient: {
-    padding: 16,
-    borderRadius: 16,
-  },
-  workoutHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
     marginBottom: 16,
   },
-  workoutDate: {
-    marginRight: 16,
-  },
-  dateCircle: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    alignItems: 'center',
+  loadingContainer: {
+    flex: 1,
     justifyContent: 'center',
-  },
-  dateDay: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  dateMonth: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.8)',
-  },
-  workoutInfo: {
-    flex: 1,
-  },
-  workoutTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  workoutDuration: {
-    fontSize: 14,
-    color: '#94A3B8',
-  },
-  workoutStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.1)',
-    paddingTop: 16,
-  },
-  statItem: {
     alignItems: 'center',
+    backgroundColor: '#0A0A0A',
+  },
+  errorContainer: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#0A0A0A',
+    padding: 24,
   },
-  statValue: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginTop: 4,
-    marginBottom: 2,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#94A3B8',
+  errorText: {
+    fontSize: 16,
+    color: '#f43f5e',
+    textAlign: 'center',
+    marginTop: 16,
   },
   emptyWorkouts: {
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 40,
+    paddingVertical: 48,
   },
   emptyText: {
     fontSize: 16,
     color: '#94A3B8',
     marginTop: 16,
-  }
+  },
+  
+  // Workout card styles
+  workoutWrapper: {
+    marginBottom: 16,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  workoutCard: {
+    borderRadius: 20,
+  },
+  cardGradient: {
+    padding: 16,
+    borderRadius: 20,
+  },
+  workoutHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  workoutName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  workoutDate: {
+    fontSize: 14,
+    color: '#94A3B8',
+    marginTop: 4,
+  },
+  saveTemplateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+  },
+  saveTemplateText: {
+    color: '#3B82F6',
+    fontSize: 13,
+    fontWeight: '600',
+    marginLeft: 4,
+  },
+  workoutMeta: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    gap: 14,
+  },
+  metaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+  },
+  metaText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '500',
+    marginLeft: 6,
+  },
+  exercisesList: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    padding: 12,
+  },
+  exerciseItem: {
+    marginBottom: 10,
+    paddingLeft: 10,
+    borderLeftWidth: 2,
+    borderLeftColor: '#3B82F6',
+  },
+  exerciseName: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  exerciseDetails: {
+    color: '#999',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  moreExercises: {
+    color: '#60A5FA',
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  modalDismissArea: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  templateModalContent: {
+    backgroundColor: '#1A1A1A',
+    borderRadius: 24,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  templateNameInput: {
+    backgroundColor: '#2A2A2A',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginBottom: 24,
+  },
+  templateModalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 14,
+  },
 });

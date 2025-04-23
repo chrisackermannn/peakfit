@@ -31,8 +31,8 @@ function getExerciseByID(id) {
         port: null,
         path: `/exercises/exercise/${id}`,
         headers: {
-            'x-rapidapi-key': 'fca3818c54msh7164d45030a5f8dp171e30jsnf70643ccdbba',
-            'x-rapidapi-host': 'exercisedb.p.rapidapi.com'
+            'x-rapidapi-key': Constants.expoConfig.extra.rapidApiKey,
+            'x-rapidapi-host': Constants.expoConfig.extra.rapidApiHost
         }
     };
 

@@ -23,6 +23,13 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../Firebase/firebaseConfig';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
+import { Badge as BadgeComponent, getCurrentChallenge } from '../components/Badge';
+import { 
+  getUserBadges, 
+  ensureUserHasFounderBadge, 
+  getUserChallengeProgress, 
+  countUserLegExercises 
+} from '../services/BadgeTracker'; // Import additional BadgeTracker functions
 
 const { width } = Dimensions.get('window');
 const defaultAvatar = require('../assets/default-avatar.png');
@@ -39,26 +46,21 @@ const BlurComponent = ({ intensity, style, children }) => {
           </View>
         </View>
       );
-    } catch (error) {
-      console.log("BlurView error:", error);
-      return (
-        <View style={[style, { backgroundColor: 'rgba(15, 15, 15, 0.9)' }]}>
-          {children}
-        </View>
-      );
+    } catch (e) {
+      console.log('BlurView error', e);
     }
-  } else {
-    // For Android, use a regular View with semi-transparent background
-    return (
-      <View style={[style, { backgroundColor: 'rgba(15, 15, 15, 0.9)' }]}>
-        {children}
-      </View>
-    );
   }
+  
+  return (
+    <View style={[style, { backgroundColor: 'rgba(10, 10, 10, 0.9)' }]}>
+      {children}
+    </View>
+  );
 };
 
-// Memoized workout item for better performance
+// Workout Item Component
 const WorkoutItem = memo(({ workout, onPress }) => {
+  // Format date
   const date = workout.date ? 
     (workout.date.toDate ? workout.date.toDate() : new Date(workout.date)) : 
     new Date();
@@ -81,9 +83,9 @@ const WorkoutItem = memo(({ workout, onPress }) => {
             <Text style={styles.dateMonth}>{format(date, 'MMM')}</Text>
           </View>
           <View style={styles.workoutDetails}>
-            <Text style={styles.workoutTime}>{format(date, 'h:mm a')}</Text>
+            <Text style={styles.workoutTime}>{workout.name || "Workout"}</Text>
             <Text style={styles.workoutDuration}>
-              {workout.duration ? `${Math.floor(workout.duration / 60)}m ${(workout.duration % 60)}s` : '00:00'}
+              {workout.duration ? `${Math.floor(workout.duration / 60)}m ${(workout.duration % 60)}s` : '00:00'} • {format(date, 'h:mm a')}
             </Text>
           </View>
         </View>
@@ -103,7 +105,7 @@ const WorkoutItem = memo(({ workout, onPress }) => {
           
           <View style={styles.workoutMetric}>
             <Text style={styles.metricValue}>
-              {Math.floor(workout.exercises?.reduce((total, item) => 
+              {(workout.exercises?.reduce((total, item) => 
                 total + ((item.weight || 0) * (item.sets || 0) * (item.reps || 0)), 0) || 0).toLocaleString()}
             </Text>
             <Text style={styles.metricLabel}>Volume</Text>
@@ -127,49 +129,6 @@ const WorkoutItem = memo(({ workout, onPress }) => {
         </View>
       </LinearGradient>
     </TouchableOpacity>
-  );
-});
-
-// Badge component
-const Badge = memo(({ badge }) => {
-  const colors = {
-    gold: ['#FFD700', '#B8860B'],
-    silver: ['#C0C0C0', '#A9A9A9'],
-    bronze: ['#CD7F32', '#8B4513'],
-    blue: ['#3B82F6', '#1D4ED8']
-  };
-  
-  let badgeColors;
-  
-  switch(badge.id) {
-    case 'first-workout':
-      badgeColors = colors.bronze;
-      break;
-    case '5-workouts':
-      badgeColors = colors.silver;
-      break;
-    case '10-workouts':
-      badgeColors = colors.gold;
-      break;
-    case '1000-lb':
-      badgeColors = colors.blue;
-      break;
-    default:
-      badgeColors = colors.blue;
-  }
-  
-  return (
-    <View style={styles.badgeContainer}>
-      <LinearGradient 
-        colors={badgeColors} 
-        style={styles.badgeCircle}
-        start={{x: 0, y: 0}}
-        end={{x: 1, y: 1}}
-      >
-        <MaterialCommunityIcons name={badge.icon} size={20} color="#FFF" />
-      </LinearGradient>
-      <Text style={styles.badgeName}>{badge.name}</Text>
-    </View>
   );
 });
 
@@ -246,110 +205,86 @@ const ProfileScreen = ({ navigation }) => {
     outputRange: [0, 1],
     extrapolate: 'clamp'
   });
-
-  // Load data on initial mount when user exists
+  
+  // Check admin status
   useEffect(() => {
-    if (user?.uid) {
-      loadUserData();
-      checkAdminStatus();
-    }
-  }, [user?.uid]);
-
-  // Check if user is admin
-  const checkAdminStatus = async () => {
-    try {
-      console.log('Checking admin status for user:', user.uid);
-      
-      // Check in admin collection
-      const adminRef = doc(db, 'admin', 'users');
-      const adminDoc = await getDoc(adminRef);
-      
-      // Also check in users collection for isAdmin flag
-      const userRef = doc(db, 'users', user.uid);
-      const userDoc = await getDoc(userRef);
-      
-      const isAdminInAdminCollection = adminDoc.exists() && 
-        adminDoc.data().list?.includes(user.uid);
-      
-      const isAdminInUserCollection = userDoc.exists() && 
-        userDoc.data().isAdmin === true;
-      
-      // Set admin status if either check passes
-      const adminStatus = isAdminInAdminCollection || isAdminInUserCollection;
-      
-      console.log('Admin status check results:');
-      console.log('- In admin collection:', isAdminInAdminCollection);
-      console.log('- In user document:', isAdminInUserCollection);
-      console.log('- Final admin status:', adminStatus);
-      
-      setIsAdmin(adminStatus);
-      
-      // If admin status is true, log additional confirmation
-      if (adminStatus) {
-        console.log('✅ User is confirmed as an admin');
-      } else {
-        console.log('❌ User is not an admin');
-      }
-    } catch (error) {
-      console.error('Error checking admin status:', error);
-      setIsAdmin(false);
-    }
-  };
-
-  // Add this useEffect to check admin status when the screen comes into focus
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
+    const checkAdmin = async () => {
       if (user?.uid) {
-        console.log('ProfileScreen focused - verifying admin status');
-        checkAdminStatus();
-      }
-    });
-
-    return unsubscribe;
-  }, [navigation, user?.uid]);
-
-  // Find the top exercise based on frequency
-  const findTopExercise = (workoutData) => {
-    const exerciseCount = {};
-    
-    // Count frequency of each exercise
-    workoutData.forEach(workout => {
-      workout.exercises?.forEach(exercise => {
-        const name = exercise.name;
-        if (name) {
-          exerciseCount[name] = (exerciseCount[name] || 0) + 1;
+        try {
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          if (userDoc.exists()) {
+            setIsAdmin(userDoc.data()?.isAdmin === true);
+          }
+        } catch (error) {
+          console.error('Error checking admin status:', error);
         }
+      }
+    };
+    
+    checkAdmin();
+  }, [user?.uid]);
+  
+  // Helper function to find the most common exercise
+  const findTopExercise = (workouts) => {
+    if (!workouts || workouts.length === 0) {
+      return { name: 'None', count: 0 };
+    }
+    
+    const exerciseCounts = {};
+    workouts.forEach(workout => {
+      workout.exercises?.forEach(exercise => {
+        if (!exercise.name) return;
+        
+        const name = exercise.name;
+        exerciseCounts[name] = (exerciseCounts[name] || 0) + 1;
       });
     });
     
-    // Find the most frequent exercise
-    let maxCount = 0;
-    let topExerciseName = null;
+    let topName = 'None';
+    let topCount = 0;
     
-    Object.entries(exerciseCount).forEach(([name, count]) => {
-      if (count > maxCount) {
-        maxCount = count;
-        topExerciseName = name;
+    Object.entries(exerciseCounts).forEach(([name, count]) => {
+      if (count > topCount) {
+        topName = name;
+        topCount = count;
       }
     });
     
-    return { 
-      name: topExerciseName || 'None', 
-      count: maxCount 
-    };
+    return { name: topName, count: topCount };
   };
-
-  // Load user data (stats, workouts)
+  
+  // Load user data on mount and on params change
+  useEffect(() => {
+    // Refresh profile when coming back from edit profile
+    const unsubscribe = navigation.addListener('focus', () => {
+      // Only refresh if timestamp param exists and is different from last time
+      const params = navigation.getState().routes.find(r => r.name === 'Profile')?.params;
+      if (params?.forceRefresh) {
+        setRefreshing(true);
+        loadUserData();
+        // Reset params
+        navigation.setParams({ forceRefresh: undefined, timestamp: undefined });
+      }
+    });
+    
+    loadUserData();
+    return unsubscribe;
+  }, [navigation]);
+  
+  // Load user data function
   const loadUserData = async () => {
-    setLoading(true);
-    setError(null);
+    if (!user) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    
     try {
-      // Get stats
-      const userStats = await getStats(user.uid);
-      setStats(userStats);
-      
-      // Get workouts - limit to 10 for performance
-      const userWorkouts = await getUserWorkouts(user.uid, 10);
+      // Ensure user has founder badge (automatically adds it if not present)
+      await ensureUserHasFounderBadge(user.uid);
+
+      // Get user workout data
+      const userWorkouts = await getUserWorkouts(user.uid);
       setWorkouts(userWorkouts);
       
       // Get friends
@@ -369,50 +304,22 @@ const ProfileScreen = ({ navigation }) => {
       const topExerciseData = findTopExercise(userWorkouts);
       setTopExercise(topExerciseData);
       
-      // Calculate badges
-      const badgesList = [];
+      // Load user badges from Firestore
+      const userBadges = await getUserBadges(user.uid);
+      setBadges(userBadges || []);
       
-      // First workout badge
-      if (userWorkouts.length >= 1) {
-        badgesList.push({
-          id: 'first-workout',
-          name: 'First Workout',
-          icon: 'trophy',
-          color: '#FFD700'
-        });
+      // Check admin status
+      try {
+        const userDocRef = doc(db, 'users', user.uid);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists() && userDoc.data().isAdmin) {
+          setIsAdmin(true);
+        } else {
+          setIsAdmin(false);
+        }
+      } catch (error) {
+        console.error("Error checking admin status:", error);
       }
-      
-      // 5 workouts badge
-      if (userWorkouts.length >= 5) {
-        badgesList.push({
-          id: '5-workouts',
-          name: '5 Workouts',
-          icon: 'medal',
-          color: '#C0C0C0'
-        });
-      }
-      
-      // 10 workouts badge
-      if (userWorkouts.length >= 10) {
-        badgesList.push({
-          id: '10-workouts',
-          name: '10 Workouts',
-          icon: 'medal',
-          color: '#CD7F32'
-        });
-      }
-      
-      // 1000 lb club
-      if (totalLiftedWeight >= 1000) {
-        badgesList.push({
-          id: '1000-lb',
-          name: '1000 lb Club',
-          icon: 'weight',
-          color: '#FFD700'
-        });
-      }
-      
-      setBadges(badgesList);
       
     } catch (err) {
       console.error('Error loading user data:', err);
@@ -525,27 +432,27 @@ const ProfileScreen = ({ navigation }) => {
                 </Text>
                 
                 <View style={styles.profileButtons}>
-                  /* Admin button - show only for admins */
-                            {isAdmin && (
-                            <TouchableOpacity 
-                              style={styles.adminButton}
-                              onPress={() => {
-                              console.log('Admin button pressed - navigating to AdminScreen');
-                              console.log('Current admin status:', isAdmin);
-                              navigateToAdmin();
-                              }}
-                            >
-                              <Text style={styles.adminButtonText}>Admin</Text>
-                            </TouchableOpacity>
-                            )}
-                          </View>
-                          </View>
-                        </View>
-                        </View>
-                      </LinearGradient>
-                      </Animated.View>
-                      
-                      {/* Sticky title that appears on scroll */}
+                  {/* Admin button - show only for admins */}
+                  {isAdmin && (
+                    <TouchableOpacity 
+                      style={styles.adminButton}
+                      onPress={() => {
+                        console.log('Admin button pressed - navigating to AdminScreen');
+                        console.log('Current admin status:', isAdmin);
+                        navigateToAdmin();
+                      }}
+                    >
+                      <Text style={styles.adminButtonText}>Admin</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            </View>
+          </View>
+        </LinearGradient>
+      </Animated.View>
+      
+      {/* Sticky title that appears on scroll */}
       <Animated.View 
         style={[
           styles.stickyHeader, 
@@ -562,55 +469,39 @@ const ProfileScreen = ({ navigation }) => {
             {/* Make sure this appears for admins */}
             {isAdmin && (
               <View style={styles.stickyAdminBadge}>
-                <Text style={styles.stickyAdminText}>Admin</Text>
+                <Text style={styles.stickyAdminText}>ADMIN</Text>
               </View>
             )}
-            
-            <TouchableOpacity 
-              style={styles.settingsButton}
-              onPress={navigateToSettings}
-            >
-              <MaterialCommunityIcons name="cog" size={22} color="#FFF" />
-            </TouchableOpacity>
           </View>
         </BlurComponent>
       </Animated.View>
       
-      {/* Main scroll content */}
-      <Animated.ScrollView
-        contentContainerStyle={styles.scrollContainer}
+      {/* Main Content */}
+      <Animated.ScrollView 
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl 
             refreshing={refreshing} 
-            onRefresh={onRefresh} 
+            onRefresh={onRefresh}
             tintColor="#3B82F6"
-            colors={["#3B82F6"]}
-            progressViewOffset={headerHeight}
           />
         }
-        showsVerticalScrollIndicator={false}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           { useNativeDriver: true }
         )}
         scrollEventThrottle={16}
-        contentInsetAdjustmentBehavior="never"
       >
-        {/* Top padding to account for header */}
-        <View style={{ height: headerHeight + 10 }} />
-        
-        {/* Bio section if available */}
-        {stats?.bio && (
-          <View style={styles.bioSection}>
-            <Text style={styles.bioText}>{stats.bio}</Text>
-          </View>
-        )}
+        {/* Spacer for header */}
+        <View style={{ height: headerHeight }} />
         
         {/* Stats Cards */}
         <View style={styles.statsContainer}>
+          {/* Workout count card */}
           <View style={styles.statCard}>
             <LinearGradient
-              colors={['#111827', '#1E293B']} // Darker theme
+              colors={['#111827', '#1F2937']} // Darker theme
               style={styles.statGradient}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
@@ -621,9 +512,10 @@ const ProfileScreen = ({ navigation }) => {
             </LinearGradient>
           </View>
           
+          {/* Total weight card */}
           <View style={styles.statCard}>
             <LinearGradient
-              colors={['#1C1917', '#292524']} // Darker theme
+              colors={['#1E3A8A', '#2563EB']} // Darker theme
               style={styles.statGradient}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
@@ -642,7 +534,13 @@ const ProfileScreen = ({ navigation }) => {
               end={{ x: 1, y: 1 }}
             >
               <MaterialCommunityIcons name="crown" size={24} color="#C4B5FD" />
-              <Text style={styles.statNumber}>{topExercise?.name === 'None' ? '-' : topExercise?.name}</Text>
+              <Text 
+                style={styles.topExerciseName}
+                numberOfLines={2}
+                ellipsizeMode="tail"
+              >
+                {topExercise?.name === 'None' ? '-' : topExercise?.name}
+              </Text>
               <Text style={styles.statLabel}>Top Exercise</Text>
             </LinearGradient>
           </View>
@@ -657,17 +555,29 @@ const ProfileScreen = ({ navigation }) => {
           {/* Friends Preview Card */}
           <FriendsPreview friends={friends} onPress={navigateToFriends} />
           
-          {/* Badges Cards */}
-          {badges.length > 0 && (
-            <>
-              <Text style={styles.subsectionTitle}>Badges Earned</Text>
+          {/* Badges Section */}
+          <View style={styles.badgesSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Badges Earned</Text>
+            </View>
+            
+            {badges.length > 0 ? (
               <View style={styles.badgesContainer}>
                 {badges.map((badge) => (
-                  <Badge key={badge.id} badge={badge} />
+                  <BadgeComponent key={badge.id} badge={badge} size="medium" />
                 ))}
               </View>
-            </>
-          )}
+            ) : (
+              <TouchableOpacity 
+                style={styles.noBadgesContainer}
+                activeOpacity={0.7}
+                onPress={() => navigation.navigate('Workout')}
+              >
+                <MaterialCommunityIcons name="trophy-outline" size={32} color="#475569" />
+                <Text style={styles.noBadgesText}>Complete challenges to earn badges</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
         
         {/* Workouts Section */}
@@ -893,53 +803,70 @@ const styles = StyleSheet.create({
   },
   stickyAdminText: {
     fontSize: 10,
-    fontWeight: '700',
+    fontWeight: '600',
     color: '#FFFFFF',
   },
   
-  // Main content styles
-  scrollContainer: {
-    flexGrow: 1,
+  // Scroll view
+  scrollView: {
+    flex: 1,
   },
-  bioSection: {
-    paddingHorizontal: 20,
-    marginBottom: 16,
-  },
-  bioText: {
-    color: '#E2E8F0',
-    fontSize: 15,
-    lineHeight: 22,
-    fontStyle: 'italic',
+  scrollContent: {
+    paddingBottom: 100,
   },
   
-  // Stats styles
+  // Stats cards
   statsContainer: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
-    gap: 10,
+    marginBottom: 20,
   },
   statCard: {
     flex: 1,
+    marginHorizontal: 4,
     borderRadius: 16,
     overflow: 'hidden',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
   },
   statGradient: {
-    padding: 12, 
+    padding: 16,
+    borderRadius: 16, // Match card borderRadius
     alignItems: 'center',
-    height: 90,
     justifyContent: 'center',
+    aspectRatio: 1.1, // Slightly taller than width
   },
   statNumber: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginVertical: 4,
-    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 4,
+    textAlign: 'center', // Center the text
+    maxWidth: 100, // Prevent long text from overflowing
   },
   statLabel: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '500',
     color: '#CBD5E0',
+  },
+  topExerciseName: {
+    fontSize: 14, // Smaller font size to fit longer text
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    paddingHorizontal: 4,
+    flexWrap: 'wrap', // Allow text to wrap to next line if needed
   },
   
   // Section containers
@@ -982,30 +909,28 @@ const styles = StyleSheet.create({
   },
   friendsEmptyState: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
     backgroundColor: '#121212',
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.3)',
-    borderStyle: 'dashed',
-    gap: 10,
   },
   friendsEmptyText: {
     color: '#3B82F6',
-    fontSize: 16,
     fontWeight: '600',
+    fontSize: 16,
+    marginLeft: 8,
   },
   friendsAvatars: {
     flexDirection: 'row',
-    alignItems: 'center',
+    marginRight: 16,
   },
   friendAvatar: {
     width: 36,
     height: 36,
     borderRadius: 18,
+    backgroundColor: '#1A1A1A', // Darker background for empty avatar
     borderWidth: 2,
     borderColor: '#121212',
   },
@@ -1013,10 +938,11 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#1F2937',
+    backgroundColor: '#333333',
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: -10,
+    zIndex: 0,
     borderWidth: 2,
     borderColor: '#121212',
   },
@@ -1040,30 +966,29 @@ const styles = StyleSheet.create({
   },
   
   // Badges styles
+  badgesSection: {
+    marginTop: 10, // Less top margin since it's within another section
+    paddingHorizontal: 0, // Remove any extra padding that might cause misalignment
+  },
   badgesContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     marginBottom: 16,
-    gap: 6,
+    gap: 12,
+    justifyContent: 'flex-start',
   },
-  badgeContainer: {
+  noBadgesContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
-    width: (width - 80) / 4,
-    marginBottom: 12,
+    backgroundColor: '#121212',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
   },
-  badgeCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
-  badgeName: {
-    fontSize: 12,
-    color: '#E2E8F0',
-    textAlign: 'center',
-    paddingHorizontal: 2,
+  noBadgesText: {
+    color: '#94A3B8',
+    fontSize: 15,
+    marginLeft: 12,
   },
   
   // Workout card styles
@@ -1104,35 +1029,35 @@ const styles = StyleSheet.create({
   },
   workoutTime: {
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '600',
     color: '#FFFFFF',
   },
   workoutDuration: {
     fontSize: 13,
     color: '#94A3B8',
+    marginTop: 2,
   },
   workoutMetrics: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    paddingVertical: 10,
-    marginVertical: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
   },
   workoutMetric: {
     alignItems: 'center',
     flex: 1,
   },
   metricValue: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
+    marginBottom: 4,
   },
   metricLabel: {
     fontSize: 12,
     color: '#94A3B8',
-    marginTop: 3,
   },
   workoutExercisesPreview: {
     marginBottom: 12,
@@ -1140,7 +1065,7 @@ const styles = StyleSheet.create({
   exercisePreview: {
     fontSize: 14,
     color: '#E2E8F0',
-    marginBottom: 3,
+    marginBottom: 4,
   },
   moreExercises: {
     fontSize: 12,
